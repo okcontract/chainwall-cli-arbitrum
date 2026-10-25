@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chainwall Operations"
+  short_description: "Set up Arbitrum vaults and policy-governed operations"
+  default_prompt: "Use $chainwall-operations to prepare and verify a Chainwall vault workflow on Arbitrum with the native CLI."

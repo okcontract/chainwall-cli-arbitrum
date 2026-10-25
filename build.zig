@@ -47,6 +47,11 @@ pub fn build(b: *std.Build) void {
             .install_dir = .prefix,
             .install_subdir = "share/doc/chainwall/LICENSES",
         }).step);
+        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+            .source_dir = b.path("skills"),
+            .install_dir = .prefix,
+            .install_subdir = "share/doc/chainwall/skills",
+        }).step);
         if (build_cli) {
             const cli_module = b.createModule(.{
                 .root_source_file = b.path("src/cli/main.zig"),

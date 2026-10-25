@@ -10,5 +10,5 @@
             .hash = "zqlite-0.0.1-RWLaY4Y8nADz2l5aBE-JVyDyM3sZzHjq0agNykuVZKqQ",
         },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src", "test", "README.md", "CLI.md", "MANUAL.md", "LSP.md", "COMPILER.md", "CONTRIBUTING.md", "LICENSE", "LICENSES", "THIRD_PARTY_NOTICES.md" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "test", "skills", "README.md", "CLI.md", "MANUAL.md", "LSP.md", "COMPILER.md", "CONTRIBUTING.md", "LICENSE", "LICENSES", "THIRD_PARTY_NOTICES.md" },
 }

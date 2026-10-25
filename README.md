@@ -54,14 +54,23 @@ OKcontract Pte. Ltd., as specified in the license.
 - [Language server reference](LSP.md)
 - [Contributing and testing](CONTRIBUTING.md)
 
+## Agent skill
+
+[chainwall-operations](skills/chainwall-operations/SKILL.md) guides assistants
+through Arbitrum setup, interaction and policy authoring, approvals, execution,
+and recovery. Copy the complete `skills/chainwall-operations` folder into your
+assistant's configured skills directory, including its references and templates.
+Invoke it as `$chainwall-operations` in assistants that support that syntax.
+Installed distributions include it under `share/doc/chainwall/skills/`.
+
 ## Install
 
 ```sh
 zig build -Doptimize=safe --prefix "$HOME/.local"
 ```
 
-This installs the three binaries, manuals, shell completions, and license notices.
-Add `$HOME/.local/bin` to your `PATH`. To cross-compile for Linux:
+This installs the three binaries, manuals, agent skill, shell completions, and
+license notices. Add `$HOME/.local/bin` to your `PATH`. To cross-compile for Linux:
 
 ```sh
 zig build -Dtarget=x86_64-linux-musl -Doptimize=safe
