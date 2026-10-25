@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.zig text
+*.zon text
+*.sh text eol=lf
+*.png binary
+*.wasm binary

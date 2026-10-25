@@ -1,0 +1,103 @@
+{
+  "presets": {
+    "1": {
+      "feed": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+      "priceFeedDecimals": 8,
+      "feedMaxAgeSeconds": 3600,
+      "environment": {
+        "sequencerRequired": false,
+        "sequencerUptimeFeed": "0x0000000000000000000000000000000000000000",
+        "recoveryGracePeriodSeconds": 0
+      }
+    },
+    "10": {
+      "feed": "0x13e3Ee699D1909E989722E753853AE30b17e08c5",
+      "priceFeedDecimals": 8,
+      "feedMaxAgeSeconds": 1200,
+      "environment": {
+        "sequencerRequired": true,
+        "sequencerUptimeFeed": "0x371EAD81c9102C9BF4874A9075FFFf170F2Ee389",
+        "recoveryGracePeriodSeconds": 3600
+      }
+    },
+    "8453": {
+      "feed": "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
+      "priceFeedDecimals": 8,
+      "feedMaxAgeSeconds": 1200,
+      "environment": {
+        "sequencerRequired": true,
+        "sequencerUptimeFeed": "0xBCF85224fc0756B9Fa45aA7892530B47e10b6433",
+        "recoveryGracePeriodSeconds": 3600
+      }
+    },
+    "42161": {
+      "feed": "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612",
+      "priceFeedDecimals": 8,
+      "feedMaxAgeSeconds": 1755,
+      "environment": {
+        "sequencerRequired": true,
+        "sequencerUptimeFeed": "0xFdB631F5EE196F0ed6FAa767959853A9F217697D",
+        "recoveryGracePeriodSeconds": 3600
+      }
+    },
+    "11155111": {
+      "feed": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+      "priceFeedDecimals": 8,
+      "feedMaxAgeSeconds": 3600,
+      "environment": {
+        "sequencerRequired": false,
+        "sequencerUptimeFeed": "0x0000000000000000000000000000000000000000",
+        "recoveryGracePeriodSeconds": 0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "name": "ChainlinkAggregator",
+      "group": "chainlink",
+      "artifact": {
+        "abi": [
+          {
+            "name": "decimals",
+            "type": "function",
+            "stateMutability": "view",
+            "inputs": [],
+            "outputs": [
+              {
+                "type": "uint8"
+              }
+            ]
+          },
+          {
+            "name": "latestRoundData",
+            "type": "function",
+            "stateMutability": "view",
+            "inputs": [],
+            "outputs": [
+              {
+                "type": "uint80",
+                "name": "roundId"
+              },
+              {
+                "type": "int256",
+                "name": "answer"
+              },
+              {
+                "type": "uint256",
+                "name": "startedAt"
+              },
+              {
+                "type": "uint256",
+                "name": "updatedAt"
+              },
+              {
+                "type": "uint80",
+                "name": "answeredInRound"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "contracts": [
+    {
+      "name": "SafeLegacyModules",
+      "group": "safe",
+      "artifact": {
+        "abi": [
+          {
+            "name": "getModules",
+            "type": "function",
+            "stateMutability": "view",
+            "inputs": [],
+            "outputs": [
+              {
+                "type": "address[]"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

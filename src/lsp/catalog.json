@@ -1,0 +1,407 @@
+{
+  "stdlib": [
+    {
+      "name": "IF",
+      "kind": "function",
+      "signature": "IF(cond, then, else)",
+      "doc": "Conditional expression."
+    },
+    {
+      "name": "$require",
+      "kind": "function",
+      "signature": "$require(condition)",
+      "doc": "Reverts unless condition is true."
+    },
+    {
+      "name": "%",
+      "kind": "function",
+      "signature": "a % b",
+      "doc": "Remainder after unsigned division."
+    },
+    {
+      "name": "$floor",
+      "kind": "function",
+      "signature": "$floor(product / product)",
+      "doc": "Materializes an exact product ratio as a uint256, rounding down once."
+    },
+    {
+      "name": "$idiv",
+      "kind": "function",
+      "signature": "$idiv(a, b)",
+      "doc": "Performs one low-level uint256 division; division by zero returns zero."
+    },
+    {
+      "name": "$sqrt",
+      "kind": "function",
+      "signature": "$sqrt(value)",
+      "doc": "Returns floor(sqrt(value)) for one uint256 word."
+    },
+    {
+      "name": "$keccak",
+      "kind": "function",
+      "signature": "$keccak(words...)",
+      "doc": "Hashes zero or more complete uint256 words in source order."
+    },
+    {
+      "name": "$bitnot",
+      "kind": "function",
+      "signature": "$bitnot(value)",
+      "doc": "Returns the 256-bit bitwise complement of value."
+    },
+    {
+      "name": "$readWords",
+      "kind": "function",
+      "signature": "$readWords(contract, selector, args, [indices])",
+      "doc": "Reads 1 to 8 selected raw return words in one static call. Indices must be increasing uint16 constants. Access the result with result[0], result[1], etc. Requires exact input ABI metadata; dynamic return offsets are not followed."
+    },
+    {
+      "name": "$read",
+      "kind": "function",
+      "signature": "$read(contract, selector, args?)",
+      "doc": "Reads from a contract. Args is an optional tuple."
+    },
+    {
+      "name": "$write",
+      "kind": "function",
+      "signature": "$write(contract, selector, args?, value?)",
+      "doc": "Writes to a contract. The optional native value follows the ABI argument tuple; use {} for no arguments."
+    },
+    {
+      "name": "$abiArgs",
+      "kind": "function",
+      "signature": "$abiArgs(start, length)",
+      "doc": "Uses one exact authenticated argument slice as a recursive ABI tape."
+    },
+    {
+      "name": "$transferNative",
+      "kind": "function",
+      "signature": "$transferNative(recipient, amount)",
+      "doc": "Transfers native currency to one canonical address word; zero succeeds without calling it."
+    },
+    {
+      "name": "$calli",
+      "kind": "function",
+      "signature": "$calli(interactionId, args?)",
+      "doc": "Calls a nested interaction by id with optional args."
+    },
+    {
+      "name": "$staticLinked",
+      "kind": "function",
+      "signature": "$staticLinked(relation)",
+      "doc": "Runs one linked artifact in the authenticated read-only subject context."
+    },
+    {
+      "name": "$valueUsd",
+      "kind": "function",
+      "signature": "$valueUsd(asset, amount, maxAge)",
+      "doc": "Returns the exact ceiling USD18 value for a token amount."
+    },
+    {
+      "name": "$nativeValueUsd",
+      "kind": "function",
+      "signature": "$nativeValueUsd(amount, maxAge)",
+      "doc": "Returns the exact ceiling USD18 value for a native amount."
+    },
+    {
+      "name": "$subjectArg",
+      "kind": "function",
+      "signature": "$subjectArg(index)",
+      "doc": "Reads a bounds-checked original interaction argument."
+    },
+    {
+      "name": "$address",
+      "kind": "function",
+      "signature": "$address(id)",
+      "doc": "Resolves a registry id or hash to an address."
+    },
+    {
+      "name": "$price",
+      "kind": "function",
+      "signature": "$price(token, outDecimals?, maxAge?)",
+      "doc": "Fetches the token price; maxAge is an optional caller ceiling on the Registry heartbeat."
+    },
+    {
+      "name": "$balance",
+      "kind": "function",
+      "signature": "$balance(owner) / $balance(token, owner)",
+      "doc": "Reads native balance for an owner or ERC20 balanceOf(owner) for a token."
+    },
+    {
+      "name": "$deadline",
+      "kind": "function",
+      "signature": "$deadline()",
+      "doc": "Returns the current time plus the validity window."
+    },
+    {
+      "name": "$slip",
+      "kind": "function",
+      "signature": "$slip(value)",
+      "doc": "Applies the slippage factor to a value."
+    },
+    {
+      "name": "$self",
+      "kind": "variable",
+      "signature": "$self",
+      "doc": "Forwarded execution caller address."
+    },
+    {
+      "name": "$this",
+      "kind": "variable",
+      "signature": "$this",
+      "doc": "Current execution host address."
+    },
+    {
+      "name": "$time",
+      "kind": "variable",
+      "signature": "$time",
+      "doc": "Current block timestamp."
+    },
+    {
+      "name": "$subjectVersion",
+      "kind": "variable",
+      "signature": "$subjectVersion",
+      "doc": "Authenticated subject-context version."
+    },
+    {
+      "name": "$subjectId",
+      "kind": "variable",
+      "signature": "$subjectId",
+      "doc": "Authenticated base interaction id."
+    },
+    {
+      "name": "$subjectNativeValue",
+      "kind": "variable",
+      "signature": "$subjectNativeValue",
+      "doc": "Authenticated native value bound."
+    },
+    {
+      "name": "$subjectActor",
+      "kind": "variable",
+      "signature": "$subjectActor",
+      "doc": "Authenticated operation actor."
+    },
+    {
+      "name": "$subjectVault",
+      "kind": "variable",
+      "signature": "$subjectVault",
+      "doc": "Authenticated governed vault."
+    },
+    {
+      "name": "$subjectArgCount",
+      "kind": "variable",
+      "signature": "$subjectArgCount",
+      "doc": "Exact original interaction argument count."
+    },
+    {
+      "name": "$subjectPolicy",
+      "kind": "variable",
+      "signature": "$subjectPolicy",
+      "doc": "Authenticated policy selected for the root interaction."
+    },
+    {
+      "name": "$noOp",
+      "kind": "variable",
+      "signature": "$noOp",
+      "doc": "No-op sentinel for IF(...) branches."
+    },
+    {
+      "name": "$arg0",
+      "kind": "variable",
+      "signature": "$arg0",
+      "doc": "Policy program argument 0."
+    },
+    {
+      "name": "$arg1",
+      "kind": "variable",
+      "signature": "$arg1",
+      "doc": "Policy program argument 1."
+    },
+    {
+      "name": "$arg2",
+      "kind": "variable",
+      "signature": "$arg2",
+      "doc": "Policy program argument 2."
+    },
+    {
+      "name": "$arg3",
+      "kind": "variable",
+      "signature": "$arg3",
+      "doc": "Policy program argument 3."
+    },
+    {
+      "name": "$arg4",
+      "kind": "variable",
+      "signature": "$arg4",
+      "doc": "Policy program argument 4."
+    },
+    {
+      "name": "$arg5",
+      "kind": "variable",
+      "signature": "$arg5",
+      "doc": "Policy program argument 5."
+    },
+    {
+      "name": "$arg6",
+      "kind": "variable",
+      "signature": "$arg6",
+      "doc": "Policy program argument 6."
+    },
+    {
+      "name": "$arg7",
+      "kind": "variable",
+      "signature": "$arg7",
+      "doc": "Policy program argument 7."
+    },
+    {
+      "name": "$arg8",
+      "kind": "variable",
+      "signature": "$arg8",
+      "doc": "Policy program argument 8."
+    },
+    {
+      "name": "$arg9",
+      "kind": "variable",
+      "signature": "$arg9",
+      "doc": "Policy program argument 9."
+    },
+    {
+      "name": "$arg10",
+      "kind": "variable",
+      "signature": "$arg10",
+      "doc": "Policy program argument 10."
+    },
+    {
+      "name": "$arg11",
+      "kind": "variable",
+      "signature": "$arg11",
+      "doc": "Policy program argument 11."
+    },
+    {
+      "name": "$arg12",
+      "kind": "variable",
+      "signature": "$arg12",
+      "doc": "Policy program argument 12."
+    },
+    {
+      "name": "$arg13",
+      "kind": "variable",
+      "signature": "$arg13",
+      "doc": "Policy program argument 13."
+    },
+    {
+      "name": "$arg14",
+      "kind": "variable",
+      "signature": "$arg14",
+      "doc": "Policy program argument 14."
+    },
+    {
+      "name": "$arg15",
+      "kind": "variable",
+      "signature": "$arg15",
+      "doc": "Policy program argument 15."
+    },
+    {
+      "name": "$arg16",
+      "kind": "variable",
+      "signature": "$arg16",
+      "doc": "Policy program argument 16."
+    },
+    {
+      "name": "$arg17",
+      "kind": "variable",
+      "signature": "$arg17",
+      "doc": "Policy program argument 17."
+    },
+    {
+      "name": "$arg18",
+      "kind": "variable",
+      "signature": "$arg18",
+      "doc": "Policy program argument 18."
+    },
+    {
+      "name": "$arg19",
+      "kind": "variable",
+      "signature": "$arg19",
+      "doc": "Policy program argument 19."
+    }
+  ],
+  "templates": [
+    {
+      "id": "send-native-private-recipient",
+      "label": "Send ETH to approved recipient",
+      "description": "Send $arg2 wei to $arg0; $arg1 carries the recipient policy mask.",
+      "source": "{ $require($arg2 > 0), $require($transferNative($arg0, $arg2)) }",
+      "valuationSource": "$nativeValueUsd($arg2, 3600)"
+    },
+    {
+      "id": "send-usdc-private-recipient",
+      "label": "Send USDC to approved recipient",
+      "description": "Send $arg2 raw USDC units to $arg0; $arg1 carries the recipient policy mask.",
+      "source": "{ $require($arg2 > 0), $require(@token(circle/usdc).transfer($arg0, $arg2)) }",
+      "valuationSource": "$valueUsd(@token(circle/usdc), $arg2, 86400)"
+    },
+    {
+      "id": "uniswap-v2-eth-usdc-oracle",
+      "label": "Uniswap V2 ETH to USDC",
+      "description": "Swap $arg0 wei with a 1 percent oracle bound.",
+      "source": "let amountIn = $arg0\nand router = @contract(uniswap/v2router)\nand WETH = @token(weth/weth)\nand USDC = @token(circle/usdc)\nand amountOutMin = $floor(amountIn * $price(WETH, 6, 86400) * 99 / ($price(USDC, 18, 86400) * 100))\nin $require(router.swapExactETHForTokens{value: amountIn}(amountOutMin, [WETH, USDC], $self, $deadline()))",
+      "valuationSource": "$nativeValueUsd($arg0, 3600)"
+    },
+    {
+      "id": "uniswap-v2-eth-usdc-bips",
+      "label": "Uniswap V2 ETH to USDC, bips",
+      "description": "Swap $arg0 wei; $arg1 is slippage in basis points, capped at 100.",
+      "source": "let amountIn = $arg0\nand slippageBips = $arg1\nand router = @contract(uniswap/v2router)\nand WETH = @token(weth/weth)\nand USDC = @token(circle/usdc)\nand amountOutMin = $floor(amountIn * $price(WETH, 6, 86400) * (10000 - slippageBips) / ($price(USDC, 18, 86400) * 10000))\nin {$require(slippageBips <= 100), $require(router.swapExactETHForTokens{value: amountIn}(amountOutMin, [WETH, USDC], $self, $deadline()))}",
+      "valuationSource": "$nativeValueUsd($arg0, 3600)"
+    },
+    {
+      "id": "uniswap-v2-usdc-weth",
+      "label": "Uniswap V2 USDC to WETH",
+      "description": "Swap $arg0 raw USDC units with a 1 percent oracle bound and clear the approval.",
+      "source": "let amountIn = $arg0\nand asset = @token(circle/usdc)\nand output = @token(weth/weth)\nand router = @contract(uniswap/v2router)\nand amountOutMin = $floor(amountIn * $price(asset, 18, 86400) * 99 / ($price(output, 6, 86400) * 100))\nin {\n  $require(asset.approve(router, amountIn)),\n  $require(router.swapExactTokensForTokens(amountIn, amountOutMin, [asset, output], $self, $deadline())),\n  $require(asset.approve(router, 0)),\n}",
+      "valuationSource": "$valueUsd(@token(circle/usdc), $arg0, 86400)"
+    },
+    {
+      "id": "uniswap-v2-usdc-lido",
+      "label": "USDC to ETH to Lido",
+      "description": "Swap $arg0 raw USDC units with a 1 percent oracle bound, clear the approval, and stake the ETH received.",
+      "source": "let router = @contract(uniswap/v2router)\nand weth = @token(weth/weth)\nand usdc = @token(circle/usdc)\nand steth = @contract(lido/steth)\nand amountOutMin = $floor($arg0 * $price(usdc, 18, 86400) * 99 / ($price(weth, 6, 86400) * 100))\nin {\n  $require(usdc.approve(router, $arg0)),\n  let before = $balance($this),\n  $require(router.swapExactTokensForETH(\n    $arg0,\n    amountOutMin,\n    [usdc, weth],\n    $this,\n    $deadline(),\n  )),\n  $require(usdc.approve(router, 0)),\n  let after = $balance($this),\n  $require(after >= before),\n  $require(steth.submit{value: after - before}(0)),\n}",
+      "valuationSource": "$valueUsd(@token(circle/usdc), $arg0, 86400)"
+    },
+    {
+      "id": "lido-submit",
+      "label": "Lido submit",
+      "description": "Stake $arg0 wei with no referral. Value the amount spent from the account.",
+      "source": "let steth = @contract(lido/steth)\nin $require(steth.submit{value: $arg0}(0))",
+      "valuationSource": "$nativeValueUsd($arg0, 3600)"
+    },
+    {
+      "id": "uniswap-v3-mint",
+      "label": "Uni V3 mint USDC/WETH",
+      "description": "Supply ticks, desired USDC/WETH amounts, and oracle-derived minima; execution requires the pool price within 1 percent of the oracle.",
+      "source": "let manager = @contract(eth/uniswap-v3-position-manager)\nand token0 = @token(circle/usdc)\nand token1 = @token(weth/weth)\nand feeTier = 500\nand tickLower = $arg0\nand tickUpper = $arg1\nand amount0Desired = $arg2\nand amount1Desired = $arg3\nand amount0Min = $arg4\nand amount1Min = $arg5\nin {\n  {\n let root = @contract(eth/uniswap-v3-usdc-weth-500).slot0(),\n let price0 = $price(@token(circle/usdc), 18, 86400),\n let price1 = $price(@token(weth/weth), 18, 86400),\n let squared = $floor(root * root / 79228162514264337593543950336),\n let lowerPrice = $floor(squared * price1 / 79228162514264337593543950336000000000000),\n let upperPrice = $floor((squared + 1) * price1 / 79228162514264337593543950336000000000000),\n let tolerance = $floor(price0 / 100),\n $require(lowerPrice >= price0 - tolerance),\n $require(upperPrice < price0 + tolerance),\n true,\n},\n  $require(token0.approve(manager, amount0Desired)),\n  $require(token1.approve(manager, amount1Desired)),\n  $require(manager.mint{value: 0}({token0, token1, feeTier, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min, amount1Min, $self, $deadline()})),\n  $require(token0.approve(manager, 0)),\n  $require(token1.approve(manager, 0)),\n}",
+      "valuationSource": "$valueUsd(@token(circle/usdc), $arg2, 86400) + $valueUsd(@token(weth/weth), $arg3, 86400)"
+    },
+    {
+      "id": "uniswap-v3-mint-eth",
+      "label": "Uni V3 mint USDC/ETH",
+      "description": "Mint from account USDC and native ETH, returning unused ETH to the account.",
+      "source": "let manager = @contract(eth/uniswap-v3-position-manager)\nand token0 = @token(circle/usdc)\nand token1 = @token(weth/weth)\nand feeTier = 500\nand tickLower = $arg0\nand tickUpper = $arg1\nand amount0Desired = $arg2\nand amount1Desired = $arg3\nand amount0Min = $arg4\nand amount1Min = $arg5\nin {\n  {\n let root = @contract(eth/uniswap-v3-usdc-weth-500).slot0(),\n let price0 = $price(@token(circle/usdc), 18, 86400),\n let price1 = $price(@token(weth/weth), 18, 86400),\n let squared = $floor(root * root / 79228162514264337593543950336),\n let lowerPrice = $floor(squared * price1 / 79228162514264337593543950336000000000000),\n let upperPrice = $floor((squared + 1) * price1 / 79228162514264337593543950336000000000000),\n let tolerance = $floor(price0 / 100),\n $require(lowerPrice >= price0 - tolerance),\n $require(upperPrice < price0 + tolerance),\n true,\n},\n  $require(token0.approve(manager, amount0Desired)),\n  $require(manager.mint{value: amount1Desired}({token0, token1, feeTier, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min, amount1Min, $self, $deadline()})),\n  $require(manager.refundETH{value: 0}()),\n  $require(token0.approve(manager, 0)),\n}",
+      "valuationSource": "$valueUsd(@token(circle/usdc), $arg2, 86400) + $valueUsd(@token(weth/weth), $arg3, 86400)"
+    },
+    {
+      "id": "uniswap-v3-mint-usdt",
+      "label": "Uni V3 mint USDC/USDT",
+      "description": "Mint a six-decimal stablecoin position with one-tick spacing.",
+      "source": "let manager = @contract(eth/uniswap-v3-position-manager)\nand token0 = @token(circle/usdc)\nand token1 = @token(eth/usdt)\nand feeTier = 100\nand tickLower = $arg0\nand tickUpper = $arg1\nand amount0Desired = $arg2\nand amount1Desired = $arg3\nand amount0Min = $arg4\nand amount1Min = $arg5\nin {\n  {\n let root = @contract(eth/uniswap-v3-usdc-usdt-100).slot0(),\n let price0 = $price(@token(circle/usdc), 18, 86400),\n let price1 = $price(@token(eth/usdt), 18, 86400),\n let squared = $floor(root * root / 79228162514264337593543950336),\n let lowerPrice = $floor(squared * price1 / 79228162514264337593543950336),\n let upperPrice = $floor((squared + 1) * price1 / 79228162514264337593543950336),\n let tolerance = $floor(price0 / 100),\n $require(lowerPrice >= price0 - tolerance),\n $require(upperPrice < price0 + tolerance),\n true,\n},\n  $require(token0.approve(manager, amount0Desired)),\n  $require(token1.approve(manager, amount1Desired)),\n  $require(manager.mint{value: 0}({token0, token1, feeTier, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min, amount1Min, $self, $deadline()})),\n  $require(token0.approve(manager, 0)),\n  $require(token1.approve(manager, 0)),\n}",
+      "valuationSource": "$valueUsd(@token(circle/usdc), $arg2, 86400) + $valueUsd(@token(eth/usdt), $arg3, 86400)"
+    },
+    {
+      "id": "aave-v3-borrow-liquidity",
+      "label": "Aave V3 borrow with liquidity postcheck",
+      "description": "Borrow $arg0 wei of WETH only if at least $arg1 wei remains in the reserve afterward. This absolute cash floor can reject a liquidity-removing front-run; it does not cap the borrowing rate.",
+      "source": "let pool = @contract(eth/aave-v3)\nand asset = @token(weth/weth)\nand reserve = @contract(aave/aeth)\nin {\n  $require($arg0 > 0 && $arg1 > 0),\n  $require(pool.borrow(asset, $arg0, 2, 0, $self)),\n  $require(asset.balanceOf(reserve) >= $arg1),\n}",
+      "valuationSource": "$valueUsd(@token(weth/weth), $arg0, 86400)"
+    }
+  ]
+}

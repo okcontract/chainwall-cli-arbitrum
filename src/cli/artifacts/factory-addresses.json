@@ -1,0 +1,8 @@
+{
+  "okFactory": {
+    "42161": "0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b"
+  },
+  "passwordGatedKVFactory": {
+    "42161": "0xAcAa3D21d9121cDF57087356667F23AC2226B8A7"
+  }
+}

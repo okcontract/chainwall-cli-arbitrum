@@ -1,0 +1,36 @@
+#compdef chainwall
+
+# Keep metadata and live Registry suggestions in the installed binary.
+local -a args suggestions descriptions suffix
+local suggestion value rest prefix
+local ret=1
+args=( "${(@Q)words[2,CURRENT-1]}" )
+suggestions=( "${(@f)$(command chainwall __complete -- "${args[@]}" "${(Q)PREFIX}" 2>/dev/null)}" )
+
+for suggestion in "${suggestions[@]}"; do
+    [[ $suggestion == *$'\t'* ]] || continue
+    value=${suggestion%%$'\t'*}
+    rest=${suggestion#*$'\t'}
+    case $value in
+        __chainwall_files__|__chainwall_directories__)
+            prefix=${rest%%$'\t'*}
+            # Leave quoting and path expansion to zsh, including spaces and ~.
+            [[ -z $prefix ]] || compset -P "${(b)prefix}"
+            if [[ $value == __chainwall_directories__ ]]; then
+                _files -/
+            else
+                _files
+            fi
+            return
+            ;;
+        *)
+            descriptions=( "$value -- $rest" )
+            suffix=()
+            # ABI names ending in '=' continue directly into a file path.
+            [[ $value != *= ]] || suffix=( -S '' )
+            compadd -l -d descriptions -M 'm:{a-zA-Z}={A-Za-z}' "${suffix[@]}" -- "$value" && ret=0
+            ;;
+    esac
+done
+
+return ret

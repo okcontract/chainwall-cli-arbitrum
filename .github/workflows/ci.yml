@@ -1,0 +1,30 @@
+name: Zig
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.17.0
+      - run: zig fmt --check build.zig build.zig.zon src test
+      - run: zig build -Doptimize=safe
+      - run: zig build test
+      - run: |
+          zig-out/bin/chainwall --version
+          zig-out/bin/chainwall-lsp --version
+          printf '%s' '$arg0 + 1' | zig-out/bin/miniscript compile

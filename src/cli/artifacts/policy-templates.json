@@ -1,0 +1,51 @@
+[
+  {
+    "id": "destination-allowlist",
+    "label": "Private destination allowlist",
+    "description": "Authorize policy- and vault-bound private recipients for two exact interaction contents.",
+    "source": "let recipient = $subjectArg(0)\nand mask = $subjectArg(1)\nand commitment = $keccak(0x71f90f3a8926b9c9550cd8fc426a13aa002de13f6e7c88186a4cbc598a7991fd, $subjectPolicy, $subjectVault, recipient, mask, 2)\nand allowed = $read(__REGISTRY__, 0x04ffd4ca, {$subjectPolicy, 0x1d4dd30ca9180f6bc326636fbe4d470dbb83ee1803b02f6ffc5f030f2df0b34e, $subjectVault, commitment})\nand exactInteractionA = $subjectId == __INTERACTION_A__ && $read(__REGISTRY__, 0x72ef7752, {__INTERACTION_A__}) == __CONTENT_A__\nand exactInteractionB = $subjectId == __INTERACTION_B__ && $read(__REGISTRY__, 0x72ef7752, {__INTERACTION_B__}) == __CONTENT_B__\nin {\n  $require(exactInteractionA || exactInteractionB),\n  $require(recipient <= 0x000000000000000000000000ffffffffffffffffffffffffffffffffffffffff),\n  $require(recipient != 0),\n  $require(allowed == 1),\n}",
+    "context": "interaction"
+  },
+  {
+    "id": "interaction-allowlist",
+    "label": "Interaction allowlist",
+    "description": "Restrict to allowed interaction ids using $arg0.",
+    "source": "let interactionA = __INTERACTION_A__\nand interactionB = __INTERACTION_B__\nin\n$require($arg0 == interactionA || $arg0 == interactionB)\n",
+    "context": "interaction"
+  },
+  {
+    "id": "pause-switch",
+    "label": "Pause switch",
+    "description": "Reads one policy state slot and rejects every interaction while it is set.",
+    "source": "let paused = $read(__REGISTRY__, 0x04ffd4ca, {$subjectPolicy, 0x113143cfdb0c95b643ca7967e017fd48f29298face27e8417f6bff4ebf172fa4, 0x8d006467b3c133109531cfd458b779cc5a3370a82e716c97797f249f312e2c1d, 0xee35723ac350a69d2a92d3703f17439cbaadf2f093a21ba5bf5f1a53eb2a14d9})\nin\n$require(paused == 0)\n",
+    "context": "interaction"
+  },
+  {
+    "id": "remaining-budget",
+    "label": "Remaining budget",
+    "description": "Values the interaction through VALUE_USD18_V1 and spends down one remaining-budget state slot.",
+    "source": "let amountUsd18 = $staticLinked(0x8056936f000da0a913d0b15d1eff060dccd4cfaca1f5fa8c46e02449c44ed27b)\nand remainingBudget = $read(__REGISTRY__, 0x04ffd4ca, {$subjectPolicy, 0x113143cfdb0c95b643ca7967e017fd48f29298face27e8417f6bff4ebf172fa4, 0x8d006467b3c133109531cfd458b779cc5a3370a82e716c97797f249f312e2c1d, 0x44bf3b8612f3ad5031675543c54cba50d550f1e3e7a2c72bd22223b657ead97f})\nin {\n  $require(amountUsd18 <= remainingBudget),\n  $require($write(__REGISTRY__, 0x21f1e4cb, {$subjectPolicy, 0x113143cfdb0c95b643ca7967e017fd48f29298face27e8417f6bff4ebf172fa4, 0x8d006467b3c133109531cfd458b779cc5a3370a82e716c97797f249f312e2c1d, 0x44bf3b8612f3ad5031675543c54cba50d550f1e3e7a2c72bd22223b657ead97f, remainingBudget - amountUsd18})),\n}",
+    "context": "interaction"
+  },
+  {
+    "id": "daily-meter-budget",
+    "label": "Daily meter budget",
+    "description": "Values the interaction through VALUE_USD18_V1 and applies the built-in policy meter for a 24h budget.",
+    "source": "let amountUsd18 = $staticLinked(0x8056936f000da0a913d0b15d1eff060dccd4cfaca1f5fa8c46e02449c44ed27b)\nin $require($write(__REGISTRY__, 0x4671fe19, {$subjectPolicy, 0xe1a0f233eecef776027666d3aa96b9d80e7180ed5609924a068e0dc4554fa2f7, 86400, amountUsd18, 25000000000000000000000, $arg1, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000}))",
+    "context": "interaction"
+  },
+  {
+    "id": "monthly-reset-budget",
+    "label": "Monthly reset budget",
+    "description": "Values the interaction through VALUE_USD18_V1 and applies start_date and monthly_budget state slots.",
+    "source": "let amountUsd18 = $staticLinked(0x8056936f000da0a913d0b15d1eff060dccd4cfaca1f5fa8c46e02449c44ed27b)\nand startDate = $read(__REGISTRY__, 0x04ffd4ca, {$subjectPolicy, 0x113143cfdb0c95b643ca7967e017fd48f29298face27e8417f6bff4ebf172fa4, 0x8d006467b3c133109531cfd458b779cc5a3370a82e716c97797f249f312e2c1d, 0xe672116e2c9a5ef3df8968e5633765eb0589e64f03c381569c33a15c58c3faf4})\nand remainingBudget = $read(__REGISTRY__, 0x04ffd4ca, {$subjectPolicy, 0x113143cfdb0c95b643ca7967e017fd48f29298face27e8417f6bff4ebf172fa4, 0x8d006467b3c133109531cfd458b779cc5a3370a82e716c97797f249f312e2c1d, 0xea959485fd07c9d089f5031a39022f582221663095d34f7f83ae4fc7b897249a})\nand elapsed = $arg6 - startDate\nand reset = elapsed >= 2592000\nand currentBudget = IF(reset, 100000000000000000000000, remainingBudget)\nand nextStartDate = $arg6 - (elapsed % 2592000)\nin {\n  $require(startDate != 0),\n  $require(amountUsd18 <= currentBudget),\n  IF(!reset, $noOp, $require($write(__REGISTRY__, 0x21f1e4cb, {$subjectPolicy, 0x113143cfdb0c95b643ca7967e017fd48f29298face27e8417f6bff4ebf172fa4, 0x8d006467b3c133109531cfd458b779cc5a3370a82e716c97797f249f312e2c1d, 0xe672116e2c9a5ef3df8968e5633765eb0589e64f03c381569c33a15c58c3faf4, nextStartDate}))),\n  $require($write(__REGISTRY__, 0x21f1e4cb, {$subjectPolicy, 0x113143cfdb0c95b643ca7967e017fd48f29298face27e8417f6bff4ebf172fa4, 0x8d006467b3c133109531cfd458b779cc5a3370a82e716c97797f249f312e2c1d, 0xea959485fd07c9d089f5031a39022f582221663095d34f7f83ae4fc7b897249a, currentBudget - amountUsd18})),\n}",
+    "context": "interaction"
+  },
+  {
+    "id": "capability-grant-delay",
+    "label": "Capability grants: 3 minutes / registry manager: 1 hour",
+    "description": "Require three minutes for ordinary capability actions and one hour for registry manager group grants.",
+    "source": "let registryGrant = $arg8 == 0xe5351b8b && $arg15 == 0xd06325e1c782588381ffc1a21d633e2f1c3a1006ae9ec4f84c130b452b170245\nin {\n  $require($arg0 == 2),\n  $require($arg13 >= $arg9 + 180),\n  $require(registryGrant == false || $arg13 >= $arg9 + 3600),\n}",
+    "context": "timelock"
+  }
+]

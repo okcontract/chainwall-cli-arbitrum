@@ -1,0 +1,14 @@
+.{
+    .name = .chainwall_miniscript,
+    .version = "0.3.0",
+    .fingerprint = 0x92518293c08ab791,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .zqlite = .{
+            .lazy = true,
+            .url = "https://github.com/karlseguin/zqlite.zig/archive/865223b734a5113f731ab1eb1d7d81c8ac252913.tar.gz",
+            .hash = "zqlite-0.0.1-RWLaY4Y8nADz2l5aBE-JVyDyM3sZzHjq0agNykuVZKqQ",
+        },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "test", "README.md", "CLI.md", "MANUAL.md", "LSP.md", "COMPILER.md", "CONTRIBUTING.md", "LICENSE", "LICENSES", "THIRD_PARTY_NOTICES.md" },
+}
