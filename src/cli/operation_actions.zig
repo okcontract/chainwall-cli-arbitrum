@@ -91,18 +91,17 @@ pub fn status(client: Client, id: c.Value) !c.Value {
 pub fn execute(client: Client, args: *Args, file: []const u8, verb: []const u8, dry: bool) !c.Value {
     const cast = client.cast;
     const a = cast.a;
-    const mode = args.get("via") orelse "account";
-    if (!@import("schema.zig").contains("account safe module", mode)) return error.InvalidExecutionMode;
-    const is_module = c.eq(u8, mode, "module");
-    const is_safe = !c.eq(u8, mode, "account");
+    const options = try @import("command_options.zig").Operation.parse(args, false);
+    const mode = @tagName(cast.route);
+    const is_module = cast.route == .module;
+    const is_safe = cast.route != .account;
     const bundled = is_module and modules.bundled(cast) and !c.eq(u8, verb, "sign-actor");
-    const approve = args.flag("approve");
-    const max_steps = try abi.uint(a, try c.word(args.get("max-steps") orelse "100000"));
-    const actor_file = args.get("actor-signature-file");
-    const signatures_file = args.get("signatures-file");
-    const reveal_file = args.get("reveal-file");
-    const out = args.get("out");
-    try args.finish();
+    const approve = options.approve;
+    const max_steps = try abi.uint(a, options.max_steps);
+    const actor_file = options.actor_file;
+    const signatures_file = options.signatures_file;
+    const reveal_file = options.reveal_file;
+    const out = options.out;
     if (!dry and cast.block != null) return error.TransactionRequiresLatestBlock;
     if (is_module and (signatures_file != null or c.eq(u8, verb, "sign"))) return error.InvalidSigningOptions;
     if (bundled and actor_file != null) return error.InvalidSigningOptions;
@@ -124,24 +123,25 @@ pub fn execute(client: Client, args: *Args, file: []const u8, verb: []const u8, 
     const sign_actor = c.eq(u8, verb, "sign-actor");
     if (module) |target| {
         if (!try remote.canonical(remote.block)) return error.ChainReorganizedRetrySync;
-        if (!sign_actor) if (out) |path| try c.write(cast.io, path, try c.encode(a, .{ .state = "prepared", .via = mode, .module = target.address, .payload = payload }), false);
+        _ = target;
     }
+    if (out) |path| try c.write(cast.io, path, try c.encode(a, .{ .state = "prepared", .via = mode, .payload = payload, .data = data }), false);
     if (sign_actor) {
         if (!is_safe or actor_file != null or signatures_file != null) return error.InvalidActorSigningOptions;
-        const actor = try cast.signerAddress();
+        const actor = if (dry) try cast.callerAddress() else try cast.signerAddress();
         const typed_data = try actorTyped(client, account, actor, data[0..10], try required(payload, "operationId"));
         const result = try c.parse(a, try c.encode(a, .{ .actor = actor, .typedData = typed_data, .signature = if (dry) @as(?[]const u8, null) else try cast.signTypedData(typed_data) }));
-        if (out) |path| try c.write(cast.io, path, try c.encode(a, result), false);
+        if (out) |path| try c.write(cast.io, path, try c.encode(a, result), true);
         return result;
     }
     if (!is_safe) {
         if (actor_file != null or signatures_file != null or c.eq(u8, verb, "sign")) return error.SafeExecutionRequired;
         const result = try client.transaction(method_name, values.items, null, dry);
-        if (out) |path| try c.write(cast.io, path, try c.encode(a, result), false);
+        if (out) |path| try c.write(cast.io, path, try c.encode(a, result), true);
         return result;
     }
     const auth = if (actor_file) |path| try @import("json_schema.zig").read(a, cast.io, "actor-signature", path) else if (is_module) blk: {
-        const actor = try cast.signerAddress();
+        const actor = if (dry) try cast.callerAddress() else try cast.signerAddress();
         const typed_data = try actorTyped(client, account, actor, data[0..10], try required(payload, "operationId"));
         break :blk try c.parse(a, try c.encode(a, .{ .actor = actor, .typedData = typed_data, .signature = if (dry or bundled) "0x" else try cast.signTypedData(typed_data) }));
     } else return error.ActorSignatureFileRequired;
@@ -203,7 +203,7 @@ pub fn execute(client: Client, args: *Args, file: []const u8, verb: []const u8, 
     if (c.eq(u8, verb, "sign")) {
         if (signatures_file != null) return error.InvalidSigningOptions;
         const result = try safe_tx.sign(safe, &tx_values, dry);
-        if (out) |path| try c.write(cast.io, path, try c.encode(a, result), false);
+        if (out) |path| try c.write(cast.io, path, try c.encode(a, result), true);
         return result;
     }
     const packed_signatures = if (signatures_file) |path|
@@ -212,12 +212,12 @@ pub fn execute(client: Client, args: *Args, file: []const u8, verb: []const u8, 
     var send_values = tx_values;
     send_values[9] = .{ .string = packed_signatures };
     const result = try safe.transaction("execTransaction", &send_values, null, dry);
+    const output = try c.parse(a, try c.encode(a, .{ .transaction = result, .transactionHash = tx_hash, .safeNonce = nonce }));
+    if (out) |path| try c.write(cast.io, path, try c.encode(a, output), true);
     if (!dry) {
         // Safe can return a successful outer receipt with ExecutionFailure.
         try safe_tx.verifySuccess(a, client.cat, result, account, tx_hash);
     }
-    const output = try c.parse(a, try c.encode(a, .{ .transaction = result, .transactionHash = tx_hash, .safeNonce = nonce }));
-    if (out) |path| try c.write(cast.io, path, try c.encode(a, output), false);
     return output;
 }
 

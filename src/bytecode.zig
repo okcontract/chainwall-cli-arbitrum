@@ -148,6 +148,8 @@ pub fn pickDepth(op: Op) ?usize {
     return if (v >= 0x4c and v <= 0x51) v - 0x49 else null;
 }
 pub const Instruction = struct { op: Op, immediate: []const u8 = &.{}, target: ?usize = null, label: ?usize = null };
+/// Arena-owned instruction construction. emit() copies immediate bytes into a.
+/// The instruction list and each immediate share the arena lifetime.
 pub const Builder = struct {
     a: t.Allocator,
     items: std.ArrayList(Instruction) = .empty,
@@ -185,7 +187,7 @@ pub fn immediateLength(op: Op, bytes: []const u8) Error!usize {
     }
     if (bytes.len < 39) return error.InvalidBytecode;
     const len: usize = @intCast(word(bytes[0..2]));
-    if (len < 4 or len > 1024 or bytes[2] > 1) return error.InvalidDescriptor;
+    if (len < 4 or len > t.limits.abi_descriptor_bytes or bytes[2] > 1) return error.InvalidDescriptor;
     var start: usize = 39;
     if (op == .READWORDS) {
         if (bytes.len <= start) return error.InvalidBytecode;
@@ -211,7 +213,7 @@ pub fn validate(op: Op, imm: []const u8) Error!void {
     if (op == .RATIO) {
         const count = imm[0];
         const mask = word(imm[1..]);
-        if (count < 2 or count > 16 or mask == 0 or mask >= (@as(u256, 1) << @intCast(count)) - 1) return error.InvalidBytecode;
+        if (count < 2 or count > t.limits.ratio_factors or mask == 0 or mask >= (@as(u256, 1) << @intCast(count)) - 1) return error.InvalidBytecode;
     }
     if (op == .STATICLINK and word(imm) == 0) return error.InvalidBytecode;
     if (op == .VALUEUSD and (word(imm[32..]) == 0 or word(imm[32..]) > 172800)) return error.InvalidBytecode;
@@ -259,6 +261,8 @@ pub fn encode(a: t.Allocator, items: []const Instruction) Error![]u8 {
     return out;
 }
 /// Caller owns the instruction slice; immediates borrow the input bytes.
+/// Free the returned instruction slice with a.free(). Immediate slices borrow
+/// bytes; keep bytes alive until every decoded instruction is no longer used.
 pub fn decode(a: t.Allocator, bytes: []const u8) Error![]Instruction {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();

@@ -6,6 +6,7 @@ const rpc = @import("rpc.zig");
 const Cast = @import("cast.zig").Cast;
 const Args = @import("args.zig").Args;
 const config = @import("config.zig");
+const metadata_batch = @import("metadata_batch.zig");
 
 fn read(remote: *rpc.Rpc, cat: contracts.Catalog, address: []const u8, name: []const u8, values: []const c.Value) !c.Value {
     return remote.namedAt(address, try cat.find("registry", name), values);
@@ -42,26 +43,28 @@ fn failure(remote: *rpc.Rpc, err: anyerror) !c.Value {
 fn price(remote: *rpc.Rpc, cat: contracts.Catalog, registry: []const u8, row: *c.Value, hash: ?c.Value, amount: c.Value, age: u64) !void {
     const a = remote.a;
     const values: []const c.Value = if (hash) |h| &.{ h, amount, try abi.uint(a, age) } else &.{ amount, try abi.uint(a, age) };
-    const value = read(remote, cat, registry, if (hash != null) "getTokenUsdValue18Ceil" else "getNativeUsdValue18Ceil", values) catch |err| {
-        try row.object.put(a, "priceError", try failure(remote, err));
+    const results = try metadata_batch.read(remote, &.{
+        .{ .address = registry, .method = try cat.find("registry", if (hash != null) "getTokenUsdValue18Ceil" else "getNativeUsdValue18Ceil"), .args = values },
+        .{ .address = registry, .method = try cat.find("registry", if (hash != null) "getTokenUsdPriceRaw" else "getNativeUsdPriceRaw"), .args = if (hash) |h| &.{h} else &.{} },
+    });
+    for (results) |result| if (result.err != null) {
+        try row.object.put(a, "priceError", try result.detail(a));
         return;
     };
-    const raw = read(remote, cat, registry, if (hash != null) "getTokenUsdPriceRaw" else "getNativeUsdPriceRaw", if (hash) |h| &.{h} else &.{}) catch |err| {
-        try row.object.put(a, "priceError", try failure(remote, err));
-        return;
-    };
+    const value = results[0].value;
+    const raw = results[1].value;
     try row.object.put(a, "usdValue18", value);
     try row.object.put(a, "usdValue", .{ .string = try decimals(a, try c.number(a, value), 18) });
     try row.object.put(a, "price", raw);
     try row.object.put(a, "priceUsd", .{ .string = try decimals(a, try c.number(a, c.field(raw, "answer").?), @intCast(try c.number(a, c.field(raw, "decimals").?))) });
 }
-fn token(remote: *rpc.Rpc, cat: contracts.Catalog, aux: contracts.Catalog, registry: []const u8, account: []const u8, hash: c.Value, age: u64) !c.Value {
+fn token(remote: *rpc.Rpc, cat: contracts.Catalog, aux: contracts.Catalog, registry: []const u8, account: []const u8, hash: c.Value, age: u64, metadata: []const metadata_batch.Outcome) !c.Value {
     const a = remote.a;
     var row = try c.parse(a, try c.encode(a, .{ .kind = "erc20", .hash = hash, .balance = @as(c.Value, .null), .usdValue18 = @as(c.Value, .null) }));
-    const meta = try read(remote, cat, registry, "getTokenByHash", &.{hash});
+    const meta = try metadata[0].require();
     if ((try c.string(c.field(meta, "id").?)).len == 0) return error.TokenMissing;
     try row.object.put(a, "metadata", meta);
-    const contract = try read(remote, cat, registry, "getContractByHash", &.{hash});
+    const contract = try metadata[1].require();
     const address = try c.string(c.field(c.field(contract, "latest").?, "addr").?);
     if (try c.word(address) == 0) return error.TokenContractMissing;
     try row.object.put(a, "address", .{ .string = address });
@@ -118,29 +121,81 @@ pub fn assets(cast: *Cast, cat: contracts.Catalog, args: *Args, account: []const
         try price(&remote, cat, cast.instance, &native, null, amount, age);
         try rows.append(native);
     }
-    for (keys.items) |hash| try rows.append(token(&remote, cat, aux, cast.instance, account, hash, age) catch |err| try c.parse(a, try c.encode(a, .{ .kind = "erc20", .hash = hash, .balance = @as(c.Value, .null), .usdValue18 = @as(c.Value, .null), .@"error" = try failure(&remote, err) })));
-    var subtotal: u256 = 0;
-    var unpriced: usize = 0;
-    var addresses: std.StringHashMapUnmanaged(c.Value) = .empty;
-    for (rows.items) |*row| {
-        // Catalog aliases can point at one ERC20 balance. Keep each record
-        // visible, but never count the same holding twice in the subtotal.
-        if (c.field(row.*, "address")) |address| {
-            const key = try std.ascii.allocLowerString(a, try c.string(address));
-            if (addresses.get(key)) |first| {
-                try row.object.put(a, "duplicateOf", first);
-                continue;
-            }
-            try addresses.put(a, key, c.field(row.*, "hash").?);
-        }
-        const value = c.field(row.*, "usdValue18").?;
-        if (value == .null) unpriced += 1 else subtotal = try std.math.add(u256, subtotal, try c.number(a, value));
+    const metadata_reads = try a.alloc(metadata_batch.Read, keys.items.len * 2);
+    for (keys.items, 0..) |hash, i| {
+        const params = try a.dupe(c.Value, &.{hash});
+        metadata_reads[2 * i] = .{ .address = cast.instance, .method = try cat.find("registry", "getTokenByHash"), .args = params };
+        metadata_reads[2 * i + 1] = .{ .address = cast.instance, .method = try cat.find("registry", "getContractByHash"), .args = params };
     }
+    const metadata_values = try metadata_batch.read(&remote, metadata_reads);
+    for (keys.items, 0..) |hash, i| {
+        const meta = metadata_values[2 * i ..][0..2];
+        const row = token(&remote, cat, aux, cast.instance, account, hash, age, meta) catch |err| blk: {
+            const detail = if (meta[0].err != null) try meta[0].detail(a) else if (meta[1].err != null) try meta[1].detail(a) else try failure(&remote, err);
+            break :blk try c.parse(a, try c.encode(a, .{ .kind = "erc20", .hash = hash, .balance = @as(c.Value, .null), .usdValue18 = @as(c.Value, .null), .@"error" = detail }));
+        };
+        try rows.append(row);
+    }
+    const valuation = try portfolioValue(a, rows.items);
+    const subtotal = valuation.subtotal;
+    const unpriced = valuation.unpriced;
     try canonical(&remote);
     const next: ?u64 = if (start +| keys.items.len < total) start + keys.items.len else null;
     const result = try c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .registry = cast.instance, .account = account, .block = remote.block, .discovery = discovery, .start = start, .tokenCount = total, .nextStart = try optionalNumber(a, next), .maxAge = age, .assets = rows.items, .pricedSubtotalUsd18 = try abi.uint(a, subtotal), .pricedSubtotalUsd = try decimals(a, subtotal, 18), .unpricedAssets = unpriced, .portfolioComplete = c.eq(u8, discovery, "registry-index") and start == 0 and next == null and unpriced == 0 }));
     if (out) |path| try c.write(cast.io, path, try c.encode(a, result), true);
     return result;
+}
+
+const Valuation = struct { subtotal: u256 = 0, unpriced: usize = 0 };
+fn portfolioValue(a: c.A, rows: []c.Value) !Valuation {
+    const Holding = struct { chosen: usize, value: ?u256, conflict: bool = false };
+    var holdings: std.StringArrayHashMapUnmanaged(Holding) = .empty;
+    const keys = try a.alloc([]const u8, rows.len);
+    for (rows, 0..) |row, i| {
+        keys[i] = if (c.field(row, "address")) |address| try std.ascii.allocLowerString(a, try c.string(address)) else try a.print("row:{d}", .{i});
+        const raw = c.field(row, "usdValue18") orelse .null;
+        const value: ?u256 = if (raw == .null) null else try c.number(a, raw);
+        if (holdings.getPtr(keys[i])) |holding| {
+            if (value) |priced| {
+                if (holding.value) |previous| {
+                    if (priced != previous) holding.conflict = true;
+                } else {
+                    holding.value = priced;
+                    holding.chosen = i;
+                }
+            }
+        } else try holdings.put(a, keys[i], .{ .chosen = i, .value = value });
+    }
+    var result: Valuation = .{};
+    for (holdings.values()) |holding| {
+        if (holding.conflict or holding.value == null) result.unpriced += 1 else result.subtotal = try std.math.add(u256, result.subtotal, holding.value.?);
+    }
+    for (rows, 0..) |*row, i| {
+        const holding = holdings.get(keys[i]).?;
+        if (holding.conflict) try row.object.put(a, "valuationConflict", .{ .bool = true });
+        if (i != holding.chosen) try row.object.put(a, "duplicateOf", c.field(rows[holding.chosen], "hash") orelse .null);
+    }
+    return result;
+}
+
+test "portfolio pricing prefers priced aliases and reports conflicting valuations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_]bool{ false, true }) |reverse| {
+        const rows = try c.parse(a, "[{\"address\":\"0xAB\",\"hash\":\"unpriced\",\"usdValue18\":null},{\"address\":\"0xab\",\"hash\":\"priced\",\"usdValue18\":\"123\"}]");
+        if (reverse) std.mem.reverse(c.Value, rows.array.items);
+        const result = try portfolioValue(a, rows.array.items);
+        try std.testing.expectEqual(@as(u256, 123), result.subtotal);
+        try std.testing.expectEqual(@as(usize, 0), result.unpriced);
+        const duplicate = rows.array.items[@intFromBool(reverse)];
+        try std.testing.expectEqualStrings("priced", try c.string(c.field(duplicate, "duplicateOf").?));
+    }
+    const conflict = try c.parse(a, "[{\"address\":\"token\",\"hash\":\"a\",\"usdValue18\":12},{\"address\":\"token\",\"hash\":\"b\",\"usdValue18\":13}]");
+    const result = try portfolioValue(a, conflict.array.items);
+    try std.testing.expectEqual(@as(u256, 0), result.subtotal);
+    try std.testing.expectEqual(@as(usize, 1), result.unpriced);
+    for (conflict.array.items) |row| try std.testing.expect(c.field(row, "valuationConflict").?.bool);
 }
 
 fn newer(_: void, left: c.Value, right: c.Value) bool {
@@ -189,8 +244,12 @@ pub fn activity(cast: *Cast, dir: []const u8, profile: config.Profile, args: *Ar
     var remote = try rpc.Rpc.init(a, cast.io, cast.rpc, cast.chain, interact);
     defer remote.deinit();
     try remote.pin(cast.block, 0);
-    if (!std.ascii.eqlIgnoreCase(try c.string(try remote.namedAt(interact, try aux.find("interact", "registry"), &.{})), cast.instance)) return error.InteractRegistryMismatch;
-    const indexed = (try remote.namedAt(interact, try aux.find("interact", "indexingEnabled"), &.{})).bool;
+    const context = try metadata_batch.read(&remote, &.{
+        .{ .address = interact, .method = try aux.find("interact", "registry") },
+        .{ .address = interact, .method = try aux.find("interact", "indexingEnabled") },
+    });
+    if (!std.ascii.eqlIgnoreCase(try c.string(try context[0].require()), cast.instance)) return error.InteractRegistryMismatch;
+    const indexed = (try context[1].require()).bool;
     const use_logs = force_logs or !indexed;
     var rows = std.json.Array.init(a);
     var from: ?u64 = null;

@@ -76,6 +76,17 @@ fn observation(cast: *Cast, endpoint: c.Value, timeout: u32) !c.Value {
     const elapsed = began.durationTo(std.Io.Clock.awake.now(cast.io)).toMilliseconds();
     return c.parse(cast.a, try c.encode(cast.a, .{ .checkedAt = std.Io.Clock.real.now(cast.io).toSeconds(), .latencyMs = elapsed, .status = if (failure == null) "healthy" else "unavailable", .@"error" = failure, .block = block }));
 }
+fn withinLag(a: c.A, health: c.Value, reference: u64, maximum: u64) !bool {
+    if (!c.eq(u8, try string(health, "status"), "healthy")) return false;
+    const height = try rpc.integer(a, try field(try field(health, "block"), "number"));
+    return reference -| height <= maximum;
+}
+fn refreshLagging(cast: *Cast, candidate: *c.Value, reference: u64, maximum: u64, timeout: u32) !bool {
+    if (try withinLag(cast.a, try field(candidate.*, "health"), reference, maximum)) return false;
+    const fresh = try observation(cast, try field(candidate.*, "endpoint"), timeout);
+    try candidate.object.put(cast.a, "health", fresh);
+    return true;
+}
 fn saveHealth(db: Store, scope: []const u8, name: []const u8, current: c.Value) !void {
     try db.begin();
     errdefer db.db.rollback();
@@ -182,10 +193,16 @@ pub fn run(cast: *Cast, dir: []const u8, profile_name: []const u8, args: *Args, 
         if (p.len == 3 and !found) return error.RpcEndpointNotFound;
         if (selecting) {
             var best: ?c.Value = null;
-            for (candidates.items) |candidate| {
-                const health = try field(candidate, "health");
-                if (highest - try rpc.integer(a, try field(try field(health, "block"), "number")) > max_lag) continue;
-                if (best == null or try c.number(a, try field(health, "latencyMs")) < try c.number(a, try field(try field(best.?, "health"), "latencyMs"))) best = candidate;
+            for (candidates.items) |*candidate| {
+                // The first sample may predate blocks produced during later probes.
+                // Recheck apparent lag against a fixed reference; refreshing must
+                // not move that reference and make another candidate stale again.
+                if (try refreshLagging(cast, candidate, highest, max_lag, timeout)) {
+                    try saveHealth(db, scope, try string(try field(candidate.*, "endpoint"), "name"), try field(candidate.*, "health"));
+                }
+                const health = try field(candidate.*, "health");
+                if (!try withinLag(a, health, highest, max_lag)) continue;
+                if (best == null or try c.number(a, try field(health, "latencyMs")) < try c.number(a, try field(try field(best.?, "health"), "latencyMs"))) best = candidate.*;
             }
             const endpoint = try field(best orelse return error.NoHealthyRpcEndpoint, "endpoint");
             selected_name = try string(endpoint, "name");
@@ -207,4 +224,30 @@ pub fn run(cast: *Cast, dir: []const u8, profile_name: []const u8, args: *Args, 
     const report = try c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .profile = profile_name, .privacy = try string(state, "privacy"), .endpoints = rows.items, .selected = selected_name, .dryRun = dry }));
     if (out) |output| try c.write(cast.io, output, try c.encode(a, report), true);
     return report;
+}
+
+test "earlier RPC samples are refreshed before rejecting apparent lag" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const mock = @import("test_rpc.zig");
+    const block = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"number\":\"0x78\",\"hash\":\"0x1111111111111111111111111111111111111111111111111111111111111111\",\"timestamp\":\"0x1\"}}]";
+    var server = try mock.Server.init(std.testing.io, &.{
+        .{ .body = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xa4b1\"}]" },
+        .{ .body = block },
+        .{ .body = block },
+    });
+    defer server.deinit();
+    var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+    defer _ = serving.cancel(std.testing.io) catch {};
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    var cast: Cast = .{ .a = a, .io = std.testing.io, .env = &env, .chain = 42161 };
+    var candidate = try c.parse(a, try c.encode(a, .{ .endpoint = .{ .url = try server.url(a) }, .health = .{ .status = "healthy", .block = .{ .number = 100 } } }));
+    try std.testing.expect(try refreshLagging(&cast, &candidate, 110, 3, 5));
+    try serving.await(std.testing.io);
+    try std.testing.expect(try withinLag(a, try field(candidate, "health"), 110, 3));
+    const later = try c.parse(a, "{\"status\":\"healthy\",\"block\":{\"number\":110}}");
+    try std.testing.expect(try withinLag(a, later, 110, 3));
+    try std.testing.expect(!try withinLag(a, later, 120, 3));
 }

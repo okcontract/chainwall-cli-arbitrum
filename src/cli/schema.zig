@@ -1,4 +1,13 @@
 const std = @import("std");
+pub const Route = enum { account, safe, module };
+fn choices(comptime T: type) []const u8 {
+    comptime var result: []const u8 = "";
+    inline for (@typeInfo(T).@"enum".field_names, 0..) |name, i| result = result ++ (if (i == 0) "" else " ") ++ name;
+    return result;
+}
+pub fn acceptsRoute(p: []const []const u8) bool {
+    return p.len >= 2 and std.mem.eql(u8, p[0], "operations") and contains("execute simulate sign sign-actor direct direct-sign direct-sign-actor", p[1]);
+}
 const c = @import("common.zig");
 
 pub const Argument = enum { none, text, file, directory, profile, chain, choice };
@@ -112,8 +121,11 @@ pub const options = [_]Option{
     .{ .name = "count", .argument = .text },
     .{ .name = "only", .argument = .text },
     .{ .name = "full" },
+    .{ .name = "log-source", .argument = .text, .choices = "auto rpc explorer" },
     .{ .name = "from-block", .argument = .text },
+    .{ .name = "backfill-from", .argument = .text },
     .{ .name = "lookback", .argument = .text },
+    .{ .name = "finality", .argument = .none },
     .{ .name = "confirmations", .argument = .text },
     .{ .name = "snapshot", .argument = .file },
     .{ .name = "abi", .argument = .file, .repeat = true },
@@ -130,7 +142,7 @@ pub const options = [_]Option{
     .{ .name = "linked-file", .argument = .file },
     .{ .name = "ttl", .argument = .text },
     .{ .name = "refresh", .argument = .text },
-    .{ .name = "via", .argument = .choice, .choices = "account safe module" },
+    .{ .name = "via", .argument = .choice, .choices = choices(Route) },
     .{ .name = "max-steps", .argument = .text },
     .{ .name = "approve" },
     .{ .name = "actor-signature-file", .argument = .file },
@@ -163,6 +175,7 @@ pub const chains = "ethereum mainnet base arbitrum optimism polygon bsc avalanch
 pub const datasets = "users groups policies orgs contracts tokens interactions safes accounts labels timelocks";
 pub const Command = struct { path: []const u8, description: []const u8 };
 pub const commands = [_]Command{
+    .{ .path = "doctor", .description = "Check local Foundry versions and command compatibility" },
     .{ .path = "schemas", .description = "List, export, template or validate JSON input schemas" },
     .{ .path = "facets catalog", .description = "List bundled canonical facet releases and selector sets" },
     .{ .path = "facets deploy", .description = "Deploy and verify a canonical facet implementation" },
@@ -174,6 +187,8 @@ pub const commands = [_]Command{
     .{ .path = "commitments template", .description = "Create a contract, token, or interaction draft template" },
     .{ .path = "commitments prepare", .description = "Generate a secret salt and save an encrypted private draft" },
     .{ .path = "commitments list", .description = "List saved commitments without disclosing private payloads" },
+    .{ .path = "commitments archive", .description = "Archive an inactive draft after checking live state" },
+    .{ .path = "commitments archives", .description = "List encrypted archived drafts without their secrets" },
     .{ .path = "commitments status", .description = "Check a draft against canonical commitments and pending actions" },
     .{ .path = "commitments commit", .description = "Submit a saved commitment with deadline and timelock checks" },
     .{ .path = "commitments reveal", .description = "Simulate and publish the matching private payload" },
@@ -233,6 +248,7 @@ pub const commands = [_]Command{
     .{ .path = "profile list", .description = "List local profiles" },
     .{ .path = "profile create", .description = "Create a profile" },
     .{ .path = "profile use", .description = "Select a profile" },
+    .{ .path = "config explain", .description = "Explain effective values, sources and shadowed profile settings" },
     .{ .path = "config show", .description = "Show profile settings" },
     .{ .path = "config get", .description = "Read a setting" },
     .{ .path = "config set", .description = "Set a setting" },
@@ -258,6 +274,7 @@ pub const commands = [_]Command{
     .{ .path = "operations checkpoint inspect", .description = "Inspect a locally saved checkpoint draft" },
     .{ .path = "operations checkpoint publish", .description = "Publish checkpoint chunks followed by the manifest" },
     .{ .path = "operations propose", .description = "Create an operation and save its app-format proposal" },
+    .{ .path = "operations reconcile", .description = "Recover a prepared proposal from its confirmed transaction without resubmitting" },
     .{ .path = "operations direct", .description = "Execute an interaction immediately through an OKAccount or Safe" },
     .{ .path = "operations direct-sign-actor", .description = "Sign a finite direct-execution actor authorization" },
     .{ .path = "operations direct-sign", .description = "Sign the Safe transaction for a direct execution" },

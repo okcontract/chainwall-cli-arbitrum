@@ -1,6 +1,32 @@
 const std = @import("std");
 const c = @import("common.zig");
 
+/// Etherscan represents zero log indexes as "0x" in some successful responses.
+/// Normalize at this provider boundary so all downstream consumers see a quantity.
+fn normalizeLog(a: c.A, raw: c.Value) !c.Value {
+    if (raw != .object) return error.InvalidExplorerResponse;
+    var result = raw;
+    result.object = try raw.object.clone(a);
+    const index = result.object.getPtr("logIndex") orelse return error.InvalidExplorerResponse;
+    if (index.* == .string and c.eq(u8, index.string, "0x")) index.* = .{ .string = "0x0" };
+    _ = try c.number(a, index.*);
+    return result;
+}
+
+test "explorer normalizes empty zero log indexes without relaxing RPC quantities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "0x", "0x0", "0x12" }, [_]u256{ 0, 0, 18 }) |text, expected| {
+        const raw = try c.parse(a, try c.encode(a, .{ .logIndex = text }));
+        const normalized = try normalizeLog(a, raw);
+        try std.testing.expectEqual(expected, try c.number(a, c.field(normalized, "logIndex").?));
+        try std.testing.expectEqualStrings(text, try c.string(c.field(raw, "logIndex").?));
+    }
+    try std.testing.expectError(error.InvalidCharacter, normalizeLog(a, try c.parse(a, "{\"logIndex\":\"0xz\"}")));
+    try std.testing.expectError(error.InvalidCharacter, c.word("0x"));
+}
+
 /// Public website links use Etherscan's bundled chain list, independently of
 /// authenticated API endpoints. Unsupported chains never inherit Ethereum's URL.
 pub fn transactionUrl(a: c.A, chain: u64, hash: []const u8) !?[]const u8 {
@@ -71,7 +97,8 @@ pub const Explorer = struct {
                 return error.EtherscanRejectedRequest;
             }
             if (items != .array or items.array.items.len > 1000) return error.InvalidExplorerResponse;
-            for (items.array.items) |item| {
+            for (items.array.items) |raw| {
+                const item = try normalizeLog(e.a, raw);
                 const emitter = try c.string(c.field(item, "address") orelse return error.InvalidExplorerResponse);
                 const topics = c.field(item, "topics") orelse return error.InvalidExplorerResponse;
                 const height = try c.number(e.a, c.field(item, "blockNumber") orelse return error.InvalidExplorerResponse);
@@ -96,6 +123,63 @@ pub const Explorer = struct {
         const mid = from + (to - from) / 2;
         try e.logRange(client, key, address, topic, from, mid, result);
         try e.logRange(client, key, address, topic, mid + 1, to, result);
+    }
+
+    /// Bounded pages for sync queues. A capped range can replay earlier pages
+    /// while subdividing; the consumer must upsert by event/record identity.
+    pub fn walk(e: *Explorer, address: []const u8, topic: []const u8, from: u64, to: u64, sink: *@import("log_sink.zig").Sink) !void {
+        if (from > to) return;
+        try c.address(address);
+        const key = e.api_key orelse return error.EtherscanTokenRequiredForLogs;
+        var client: std.http.Client = .{ .allocator = std.heap.page_allocator, .io = e.io };
+        defer client.deinit();
+        try e.walkRange(&client, key, address, topic, from, to, sink);
+    }
+    fn walkRange(e: *Explorer, client: *std.http.Client, key: []const u8, address: []const u8, topic: []const u8, from: u64, to: u64, sink: *@import("log_sink.zig").Sink) anyerror!void {
+        var seen_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer seen_arena.deinit();
+        var seen: std.StringHashMapUnmanaged(void) = .empty;
+        for (1..11) |page| {
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
+            const a = arena.allocator();
+            var reader = e.*;
+            reader.a = a;
+            const url = try a.print("{s}{s}chainid={d}&module=logs&action=getLogs&address={s}&topic0={s}&fromBlock={d}&toBlock={d}&page={d}&offset=1000&apikey={s}", .{ e.endpoint, if (std.mem.indexOfScalar(u8, e.endpoint, '?') == null) "?" else "&", e.chain, address, topic, from, to, page, try escape(a, key) });
+            const data = try reader.request(client, url);
+            const status = try c.string(c.field(data, "status") orelse return error.InvalidExplorerResponse);
+            const items = c.field(data, "result") orelse return error.InvalidExplorerResponse;
+            if (!c.eq(u8, status, "1")) {
+                const message = c.string(c.field(data, "message") orelse .null) catch "";
+                if (c.eq(u8, status, "0") and c.eq(u8, message, "No records found") and items == .array and items.array.items.len == 0) return;
+                const reason = c.string(items) catch "";
+                if (std.mem.indexOf(u8, reason, "Query Timeout") != null or std.mem.indexOf(u8, reason, "Result window is too large") != null) break;
+                return error.EtherscanRejectedRequest;
+            }
+            if (items != .array or items.array.items.len > 1000) return error.InvalidExplorerResponse;
+            var normalized = std.json.Array.init(a);
+            for (items.array.items) |raw| {
+                const item = try normalizeLog(a, raw);
+                const emitter = try c.string(c.field(item, "address") orelse return error.InvalidExplorerResponse);
+                const topics = c.field(item, "topics") orelse return error.InvalidExplorerResponse;
+                const height = try c.number(a, c.field(item, "blockNumber") orelse return error.InvalidExplorerResponse);
+                if (!std.ascii.eqlIgnoreCase(emitter, address) or topics != .array or topics.array.items.len < 2 or !std.ascii.eqlIgnoreCase(try c.string(topics.array.items[0]), topic) or height < from or height > to) return error.InvalidExplorerResponse;
+                const tx = try c.string(c.field(item, "transactionHash") orelse return error.InvalidExplorerResponse);
+                if (tx.len != 66) return error.InvalidExplorerResponse;
+                const identity = try a.print("{s}:{d}", .{ tx, try c.number(a, c.field(item, "logIndex").?) });
+                if (seen.contains(identity)) return error.ExplorerPaginationDidNotAdvance;
+                try seen.put(seen_arena.allocator(), try seen_arena.allocator().dupe(u8, identity), {});
+                try normalized.append(item);
+            }
+            try sink.accept(a, normalized.items);
+            sink.peak_bytes = @max(sink.peak_bytes, arena.queryCapacity() + seen_arena.queryCapacity());
+            if (items.array.items.len < 1000) return;
+        }
+        if (from == to) return error.ExplorerSingleBlockLogLimit;
+        _ = seen_arena.reset(.free_all);
+        const mid = from + (to - from) / 2;
+        try e.walkRange(client, key, address, topic, from, mid, sink);
+        try e.walkRange(client, key, address, topic, mid + 1, to, sink);
     }
 
     fn abiPath(e: *Explorer, address: []const u8) ![]const u8 {

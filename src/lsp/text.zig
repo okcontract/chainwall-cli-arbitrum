@@ -8,17 +8,17 @@ pub const Position = struct { line: usize, character: usize };
 pub const Range = struct { start: Position, end: Position };
 pub const Edit = struct { range: Range, newText: []const u8 };
 pub const Encoding = enum { utf16, utf8 };
-pub const max_source = 256 * 1024;
+pub const max_source = ms.limits.source_bytes;
 
 pub fn position(source: []const u8, offset_: usize, encoding: Encoding) Position {
     const end_offset = @min(offset_, source.len);
     var result: Position = .{ .line = 0, .character = 0 };
     var i: usize = 0;
     while (i < end_offset) {
-        if (source[i] == '\n') {
+        if (source[i] == '\n' or source[i] == '\r') {
             result.line += 1;
             result.character = 0;
-            i += 1;
+            i += if (source[i] == '\r' and i + 1 < source.len and source[i + 1] == '\n') @as(usize, 2) else 1;
         } else {
             const width = std.unicode.utf8ByteSequenceLength(source[i]) catch 1;
             if (i + width > end_offset) break;
@@ -34,9 +34,13 @@ pub fn offset(source: []const u8, input: c.Value, encoding: Encoding) !usize {
     if (line < 0 or character < 0) return error.InvalidParams;
     var i: usize = 0;
     var current: usize = 0;
-    while (current < line) : (current += 1) i = (std.mem.indexOfScalarPos(u8, source, i, '\n') orelse return source.len) + 1;
+    while (current < line) : (current += 1) {
+        while (i < source.len and source[i] != '\r' and source[i] != '\n') i += 1;
+        if (i == source.len) return i;
+        i += if (source[i] == '\r' and i + 1 < source.len and source[i + 1] == '\n') @as(usize, 2) else 1;
+    }
     var units: usize = 0;
-    while (i < source.len and source[i] != '\n' and !(source[i] == '\r' and i + 1 < source.len and source[i + 1] == '\n')) {
+    while (i < source.len and source[i] != '\n' and source[i] != '\r') {
         if (units == character) return i;
         const width = std.unicode.utf8ByteSequenceLength(source[i]) catch return error.InvalidParams;
         units += if (encoding == .utf8) width else if (width == 4) @as(usize, 2) else 1;
@@ -160,4 +164,17 @@ test "edit storage is released on allocation and validation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationEdits, .{edits});
     const invalid = try c.parse(arena.allocator(), "[{\"text\":\"valid\"},{\"range\":{\"start\":{\"line\":0,\"character\":4},\"end\":{\"line\":0,\"character\":1}},\"text\":\"\"}]");
     try std.testing.expectError(error.InvalidParams, changed(std.testing.allocator, "abc", invalid, .utf16));
+}
+
+test "line positions and edits support CR, LF and CRLF" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "\r", "\n", "\r\n" }) |ending| {
+        const source = try a.print("one{s}two{s}", .{ ending, ending });
+        const start = 3 + ending.len;
+        try std.testing.expectEqual(Position{ .line = 1, .character = 0 }, position(source, start, .utf16));
+        try std.testing.expectEqual(start + 1, try offset(source, try p.json(a, .{ .line = 1, .character = 1 }), .utf16));
+        try std.testing.expectEqual(Position{ .line = 2, .character = 0 }, position(source, source.len, .utf16));
+    }
 }

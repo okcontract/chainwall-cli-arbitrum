@@ -2,6 +2,10 @@ const std = @import("std");
 pub const Allocator = std.mem.Allocator;
 pub const Error = error{ OutOfMemory, Syntax, Unsupported, InvalidConstant, InvalidArguments, UnboundVariable, DuplicateBinding, CyclicDefinition, ConditionalMemo, InvalidType, StackCapacity, StackUnderflow, InvalidBytecode, InvalidDescriptor, InvalidSettings, ResourceLimit };
 
+// Authoring bounds shared with bytecode reconstruction, independent of any
+// larger frame a particular deployed VM might accept.
+pub const limits = @import("limits.zig");
+
 // Children are stored in source evaluation order. Call metadata describes the
 // argument groups without introducing non-expression nodes into IR traversal.
 pub const Tag = enum {
@@ -65,6 +69,37 @@ pub const Type = enum { word, boolean, unit, mixed, words1, words2, words3, word
 /// Byte offsets into the original UTF-8 source. Generated IR has empty spans;
 /// source positions never participate in lowering or bytecode generation.
 pub const Span = struct { start: usize = 0, end: usize = 0 };
+/// Diagnostics borrow no arena memory. Spans are half-open UTF-8 byte offsets
+/// in the source passed to compileDetailed; strings have static lifetime.
+pub const Diagnostic = struct {
+    phase: enum { parse, settings, lower, validate, normalize, generate, optimize } = .parse,
+    code: []const u8 = "",
+    message: []const u8 = "",
+    primary: ?Span = null,
+    related: ?Span = null,
+    pub fn locate(d: *Diagnostic, span: Span) void {
+        if (d.primary == null) d.primary = span;
+    }
+    pub fn record(d: *Diagnostic, span: Span, err: anyerror) void {
+        if (d.code.len != 0) return;
+        d.code = @errorName(err);
+        d.locate(span);
+        d.message = switch (err) {
+            error.Syntax => "Expected a valid expression, binding, or closing delimiter here.",
+            error.InvalidConstant => "This value must be an exact integer within the required unsigned range.",
+            error.UnboundVariable => "This name has no visible binding.",
+            error.DuplicateBinding => "This binding repeats a name already declared in the same scope.",
+            error.CyclicDefinition => "This definition depends on itself through a binding cycle.",
+            error.InvalidArguments => "Arguments do not match the function's required count or shape.",
+            error.InvalidType => "This expression's result type is not valid in this position.",
+            error.InvalidSettings => "A compiler setting is unknown, malformed, or inconsistent with ABI metadata.",
+            error.InvalidDescriptor => "ABI metadata cannot be represented by this compiler.",
+            error.StackCapacity => "This expression needs more accessible stack slots than the VM supports.",
+            error.ResourceLimit => "The program exceeds a compiler resource limit.",
+            else => @errorName(err),
+        };
+    }
+};
 pub const Node = struct {
     tag: Tag,
     children: []*Node = &.{},
@@ -86,20 +121,25 @@ pub const Node = struct {
 };
 pub const Binding = struct { name: []const u8, value: *Node, spelling: []const u8 = "", name_span: Span = .{} };
 pub const Program = struct { bindings: []const Binding, main: *Node };
+/// Arena-oriented graph allocation. Nodes and copied child slices belong to a;
+/// named() borrows the name and child nodes. clone() is shallow: names, metadata,
+/// and descendants retain their original lifetimes. There is no recursive free.
 pub const Factory = struct {
     a: Allocator,
+    origin: Span = .{},
+    diagnostic: ?*Diagnostic = null,
     next: usize = 0,
     created: usize = 0,
     fn allocate(f: *Factory) Error!*Node {
         // Rewriting may expand a small input quadratically. Limit total work,
         // including discarded intermediate trees, within one operation.
-        if (f.created >= 100_000) return error.ResourceLimit;
+        if (f.created >= limits.factory_nodes) return error.ResourceLimit;
         f.created += 1;
         return f.a.create(Node);
     }
     pub fn node(f: *Factory, tag: Tag, children: []const *Node) Error!*Node {
         const n = try f.allocate();
-        n.* = .{ .tag = tag, .children = try f.a.dupe(*Node, children) };
+        n.* = .{ .tag = tag, .children = try f.a.dupe(*Node, children), .span = f.origin };
         return n;
     }
     pub fn num(f: *Factory, value: u256) Error!*Node {

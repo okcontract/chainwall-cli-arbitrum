@@ -15,6 +15,7 @@ pub const Token = struct { span: Span, kind: enum { identifier, number, string, 
 
 /// Tolerant tokenization is only for editor context and presentation. The real
 /// parser remains authoritative for syntax, scopes, diagnostics and compilation.
+/// Token storage uses a's arena; text slices borrow source.
 pub fn tokens(a: std.mem.Allocator, source: []const u8) ![]const Token {
     var out: std.ArrayList(Token) = .empty;
     var i: usize = 0;
@@ -41,7 +42,7 @@ pub fn tokens(a: std.mem.Allocator, source: []const u8) ![]const Token {
             while (open < source.len and std.ascii.isWhitespace(source[open])) open += 1;
             if (open < source.len and source[open] == '(') {
                 i = open + 1;
-                while (i < source.len and source[i] != ')' and source[i] != '\n') i += 1;
+                while (i < source.len and source[i] != ')' and source[i] != '\n' and source[i] != '\r') i += 1;
                 if (i < source.len and source[i] == ')') i += 1;
             }
         } else if (std.ascii.isDigit(ch) or (ch == '.' and i < source.len and std.ascii.isDigit(source[i]))) {
@@ -52,7 +53,7 @@ pub fn tokens(a: std.mem.Allocator, source: []const u8) ![]const Token {
             while (i < source.len and word(source[i])) i += 1;
         } else if (i < source.len and ((source[i] == '=' and std.mem.indexOfScalar(u8, "=!<>", ch) != null) or (source[i] == ch and std.mem.indexOfScalar(u8, "&|:", ch) != null))) i += 1;
         try out.append(a, .{ .span = .{ .start = start, .end = i }, .kind = kind, .text = source[start..i] });
-        if (out.items.len > 32768) return error.ResourceLimit;
+        if (out.items.len > tree.limits.syntax_tokens) return error.ResourceLimit;
     }
     return out.items;
 }
@@ -64,11 +65,26 @@ fn validate(a: std.mem.Allocator, source: []const u8) !void {
 }
 
 pub fn format(a: std.mem.Allocator, source: []const u8, spaces: usize) ![]const u8 {
+    return formatWithOptions(a, source, .{ .tab_size = spaces });
+}
+pub const FormatOptions = struct { tab_size: usize = 2, insert_spaces: bool = true };
+/// Preserve the first line-ending style; mixed structural whitespace is
+/// normalized to that style. String contents are emitted without alteration.
+/// Use an arena: validation/tokenization intermediates share its lifetime.
+pub fn formatWithOptions(a: std.mem.Allocator, source: []const u8, options: FormatOptions) ![]const u8 {
+    if (options.tab_size == 0 or options.tab_size > tree.limits.indentation_width) return error.InvalidIndentWidth;
+    const ending: []const u8 = blk: {
+        for (source, 0..) |ch, at| {
+            if (ch == '\r') break :blk if (at + 1 < source.len and source[at + 1] == '\n') "\r\n" else "\r";
+            if (ch == '\n') break :blk "\n";
+        }
+        break :blk "\n";
+    };
     try validate(a, source);
     const items = try tokens(a, source);
     var out: std.ArrayList(u8) = .empty;
     var depth: usize = 0;
-    var braces: [256]bool = undefined;
+    var braces: [tree.limits.syntax_depth]bool = undefined;
     var brace_count: usize = 0;
     var newline = true;
     for (items, 0..) |item, i| {
@@ -82,9 +98,9 @@ pub fn format(a: std.mem.Allocator, source: []const u8, spaces: usize) ![]const 
         }
         if (std.mem.eql(u8, s, "and") or std.mem.eql(u8, s, "in")) newline = true;
         if (newline) {
-            while (out.items.len > 0 and out.items[out.items.len - 1] == ' ') _ = out.pop();
-            if (out.items.len > 0 and out.items[out.items.len - 1] != '\n') try out.append(a, '\n');
-            try out.appendNTimes(a, ' ', depth * @min(spaces, 8));
+            while (out.items.len > 0 and (out.items[out.items.len - 1] == ' ' or out.items[out.items.len - 1] == '\t')) _ = out.pop();
+            if (out.items.len > 0 and out.items[out.items.len - 1] != ending[ending.len - 1]) try out.appendSlice(a, ending);
+            try out.appendNTimes(a, if (options.insert_spaces) ' ' else '\t', depth * if (options.insert_spaces) options.tab_size else @as(usize, 1));
         } else if (out.items.len > 0 and !std.mem.eql(u8, s, ",") and !std.mem.eql(u8, s, ";") and !std.mem.eql(u8, s, ")") and !std.mem.eql(u8, s, "]") and !std.mem.eql(u8, s, ".") and !std.mem.eql(u8, s, ":") and !std.mem.eql(u8, prev, ".") and !std.mem.eql(u8, prev, "(") and !std.mem.eql(u8, prev, "[") and !(std.mem.eql(u8, s, "(") and (items[i - 1].kind == .identifier or std.mem.eql(u8, prev, "}"))) and !(std.mem.eql(u8, s, "[") and (items[i - 1].kind == .identifier or std.mem.eql(u8, prev, ")")))) try out.append(a, ' ');
         try out.appendSlice(a, s);
         newline = false;
@@ -103,7 +119,7 @@ pub fn format(a: std.mem.Allocator, source: []const u8, spaces: usize) ![]const 
             newline = true;
         } else if (std.mem.eql(u8, s, ";") and depth == 0) newline = true;
     }
-    try out.append(a, '\n');
+    try out.appendSlice(a, ending);
     try validate(a, out.items);
     return out.toOwnedSlice(a);
 }

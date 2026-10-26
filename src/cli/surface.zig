@@ -18,7 +18,7 @@ pub const Surface = struct {
     diagnostic_span: ?ms.tree.Span = null,
 
     pub fn parse(a: c.A, source: []const u8) !Surface {
-        if (source.len > 256 * 1024) return error.SourceTooLarge;
+        if (source.len > ms.limits.source_bytes) return error.SourceTooLarge;
         var f: ms.tree.Factory = .{ .a = a };
         var parser: ms.parser.Parser = .{ .f = &f, .source = source, .surface = true };
         const program = try parser.parse();
@@ -42,7 +42,7 @@ pub const Surface = struct {
         for (n.children) |child| try collect(a, child, refs);
     }
     fn reference(s: *Surface, node: *Node, locals: ?*const Local, depth: usize) anyerror!?*Node {
-        if (depth > 256) return error.CyclicDefinition;
+        if (depth > ms.limits.resolution_depth) return error.CyclicDefinition;
         if (node.tag == .registry_reference) return node;
         if (node.tag != .variable) return null;
         var local = locals;
@@ -243,7 +243,7 @@ pub const Surface = struct {
         for (s.program.bindings, 0..) |binding, i| try out.writer.print("{s} {s} = {s}\n", .{ if (i == 0) "let" else "and", binding.spelling, try s.render(binding.value, null, null) });
         if (s.program.bindings.len > 0) try out.writer.writeAll("in ");
         try out.writer.writeAll(try s.render(s.program.main, null, null));
-        if (out.written().len > 512 * 1024) return error.GeneratedSourceTooLarge;
+        if (out.written().len > ms.limits.generated_source_bytes) return error.GeneratedSourceTooLarge;
         return out.toOwnedSlice();
     }
     fn render(s: *Surface, n: *Node, locals: ?*const Local, schema: ?*Schema) anyerror![]const u8 {

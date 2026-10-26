@@ -38,6 +38,10 @@ pub const Normalizer = struct {
         return n.finish(steps, result);
     }
     fn norm(n: *Normalizer, node: *Node, env: ?*const Env, steps: *Steps) Error!*Node {
+        const origin = n.f.origin;
+        n.f.origin = node.span;
+        defer n.f.origin = origin;
+        errdefer if (n.f.diagnostic) |d| d.locate(node.span);
         if (node.tag == .local) return Env.get(env, node.name) orelse error.UnboundVariable;
         if (t.atomic(node)) return node;
         if (node.tag == .let) {
@@ -115,6 +119,10 @@ fn scheduleSequence(f: *t.Factory, nodes: []const *Node, statement: bool) Error!
     return if (kept.items.len == 0) f.node(.unit, &.{}) else f.sequence(kept.items);
 }
 pub fn schedule(f: *t.Factory, node: *Node, statement: bool) Error!*Node {
+    const origin = f.origin;
+    f.origin = node.span;
+    defer f.origin = origin;
+    errdefer if (f.diagnostic) |d| d.locate(node.span);
     if (statement and !t.effect(node)) return f.node(.unit, &.{});
     const out = try f.clone(node);
     for (out.children, 0..) |*child, i| {

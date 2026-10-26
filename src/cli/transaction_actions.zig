@@ -12,6 +12,11 @@ const string = @import("commitment_codec.zig").string;
 fn bumped(value: u256, percent: u64) !u256 {
     return @max(try std.math.add(u256, value, 1), try std.math.divCeil(u256, try std.math.mul(u256, value, 100 + percent), 100));
 }
+fn replacementGasLimit(estimated: u64, explicit: ?u64, previous: u64) !u64 {
+    const limit = try fees.gasLimit(estimated, explicit);
+    if (explicit != null and limit < previous) return error.ReplacementGasLimitTooLow;
+    return @max(limit, previous);
+}
 fn replace(cast: *Cast, db: Store, tx_hash: []const u8, cancel: bool, bump: u64, out: ?[]const u8, dry: bool) !c.Value {
     if (cast.auth != null) return error.ReplacementRequiresFoundrySigner;
     if (cast.block != null) return error.TransactionRequiresLatestBlock;
@@ -37,8 +42,9 @@ fn replace(cast: *Cast, db: Store, tx_hash: []const u8, cancel: bool, bump: u64,
     sending.nonce = nonce;
     sending.block = null;
     const old_limit = try rpc.integer(a, try field(tx, "gas"));
-    sending.fees.gas_limit = cast.fees.gas_limit orelse if (cancel) 21000 else old_limit;
-    if (sending.fees.gas_limit.? < (if (cancel) @as(u64, 21000) else old_limit)) return error.ReplacementGasLimitTooLow;
+    // Estimate the replacement payload without imposing the old gas limit.
+    // Arbitrum includes L1 posting costs, even for an empty self-transfer.
+    sending.fees.gas_limit = null;
     if (kind == 2) {
         if (cast.fees.legacy or cast.fees.gas_price != null) return error.ReplacementFeeModelMismatch;
         const minimum_max = try bumped(try c.number(a, try field(tx, "maxFeePerGas")), bump);
@@ -75,11 +81,14 @@ fn replace(cast: *Cast, db: Store, tx_hash: []const u8, cancel: bool, bump: u64,
     if (sending.access_list) |list| try request.object.put(a, "accessList", list);
     request = try fees.normalize(&sending, request, actor);
     try sending.fees.overlay(a, &request);
+    const estimated = try rpc.integer(a, try remote.one("eth_estimateGas", try abi.array(a, &.{ request, .{ .string = try rpc.quantity(a, remote.block.number) } })));
+    sending.fees.gas_limit = try replacementGasLimit(estimated, cast.fees.gas_limit, if (cancel) 0 else old_limit);
+    try sending.fees.overlay(a, &request);
     // eth_call checks the exact replacement payload without broadcasting. A
     // cancellation or reprice still competes with the original until mined.
     _ = try remote.one("eth_call", try abi.array(a, &.{ request, try remote.blockSelector() }));
     if (!try remote.canonical(remote.block)) return error.TransactionReorganized;
-    var report = try c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .originalHash = tx_hash, .action = if (cancel) "cancel" else "speed-up", .transaction = request, .block = remote.block, .bumpPercent = bump }));
+    var report = try c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .originalHash = tx_hash, .action = if (cancel) "cancel" else "speed-up", .transaction = request, .estimatedGas = estimated, .block = remote.block, .bumpPercent = bump }));
     if (out) |file| try c.write(cast.io, file, try c.encode(a, report), false);
     if (dry) return report;
     // Check again immediately before handing the same nonce to Foundry.
@@ -105,6 +114,8 @@ pub fn run(cast: *Cast, dir: []const u8, args: *Args, p: []const []const u8, dry
     const verb = p[1];
     const replacing = @import("schema.zig").contains("speed-up cancel", verb);
     const listing = c.eq(u8, verb, "list");
+    const finality = args.flag("finality");
+    if (finality and (listing or replacing)) return error.FinalityRequiresObservation;
     const refresh_all = c.eq(u8, verb, "refresh") and p.len == 2;
     if (p.len != @as(usize, if (listing or refresh_all) 2 else 3)) return error.WrongArgumentCount;
     const out = args.get("out");
@@ -122,20 +133,44 @@ pub fn run(cast: *Cast, dir: []const u8, args: *Args, p: []const []const u8, dry
     const db = try Store.open(a, cast.io, dir);
     defer db.close();
     if (replacing) return replace(cast, db, try watch.hash(a, p[2]), c.eq(u8, verb, "cancel"), bump, out, dry);
-    const entries = try watch.list(db, cast.chain);
+    const entries = if (listing or refresh_all) try watch.page(db, cast.chain, start, count) else null;
     var rows = std.json.Array.init(a);
     if (listing or refresh_all) {
-        const offset = @min(start, entries.len);
-        for (entries[offset..@min(offset + count, entries.len)]) |entry| {
-            const report = if (listing) entry else watch.wait(cast, db, try string(entry, "hash"), 0, confirmations, lookback, poll) catch |err| {
+        for (entries.?.values) |entry| {
+            var report = if (listing) entry else watch.wait(cast, db, try string(entry, "hash"), 0, confirmations, lookback, poll) catch |err| {
                 if (err == error.OutOfMemory) return err;
                 try rows.append(try c.parse(a, try c.encode(a, .{ .hash = try field(entry, "hash"), .errorName = @errorName(err) })));
                 continue;
             };
-            try rows.append(report);
+            if (listing) try report.object.put(a, "cache", try @import("cache_metadata.zig").describe(a, "transaction-journal", .null, c.field(report, "block") orelse .null, false));
+            try rows.append(if (finality) try withFinality(cast, db, report) else report);
         }
     }
-    const report = if (listing or refresh_all) try c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .total = entries.len, .entries = rows.items })) else try watch.wait(cast, db, try watch.hash(a, p[2]), if (c.eq(u8, verb, "wait")) timeout else 0, confirmations, lookback, poll);
+    var report = if (listing or refresh_all) try c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .total = entries.?.total, .entries = rows.items })) else try watch.wait(cast, db, try watch.hash(a, p[2]), if (c.eq(u8, verb, "wait")) timeout else 0, confirmations, lookback, poll);
+    if (listing) try report.object.put(a, "cache", try @import("cache_metadata.zig").describe(a, "transaction-journal", .null, .null, false));
+    if (finality and !listing and !refresh_all) report = try withFinality(cast, db, report);
     if (out) |file| try c.write(cast.io, file, try c.encode(a, report), false);
+    return report;
+}
+
+test "replacement gas estimates include posting costs and validate explicit limits" {
+    try std.testing.expectEqual(@as(u64, 25506), try replacementGasLimit(21255, null, 0));
+    try std.testing.expectError(error.GasLimitBelowEstimate, replacementGasLimit(21255, 21000, 0));
+    try std.testing.expectEqual(@as(u64, 30000), try replacementGasLimit(21255, 30000, 0));
+    try std.testing.expectEqual(@as(u64, 50000), try replacementGasLimit(21255, null, 50000));
+    try std.testing.expectEqual(@as(u64, 72000), try replacementGasLimit(60000, null, 50000));
+}
+
+fn withFinality(cast: *Cast, db: Store, observation: c.Value) !c.Value {
+    var remote = try rpc.Rpc.initEndpoint(cast.a, cast.io, cast.rpc, cast.chain);
+    defer remote.deinit();
+    remote.timeout_seconds = 5;
+    remote.read_attempts = 1;
+    var report = observation;
+    const replacement = c.field(report, "replacement") orelse .null;
+    const receipt = if (replacement != .null) c.field(replacement, "receipt") orelse .null else c.field(report, "receipt") orelse .null;
+    try report.object.put(cast.a, "finality", try @import("transaction_finality.zig").check(&remote, receipt));
+    if (receipt != .null) if (c.field(receipt, "transactionHash")) |hash| try report.object.put(cast.a, "finalityTransactionHash", hash);
+    try watch.save(db, cast.chain, report);
     return report;
 }

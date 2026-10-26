@@ -113,7 +113,15 @@ pub fn inspect(cast: *Cast, cat: contracts.Catalog, args: *Args, p: []const []co
     const gateway = args.get("ipfs-gateway") orelse "https://ipfs.io/ipfs";
     const file = args.get("document-file");
     const out = args.get("out");
+    const offline = args.flag("offline");
     try args.finish();
+    if (offline and (p.len != 4 or file == null)) return error.OfflineTermsInputsRequired;
+    if (p.len == 4 and file != null) {
+        const terms = try c.parse(cast.a, try c.encode(cast.a, .{ .ipfsUri = p[2], .documentHash = p[3] }));
+        const document = try verifiedDocument(cast, terms, gateway, file);
+        if (out) |path| try c.write(cast.io, path, document, false);
+        return c.parse(cast.a, try c.encode(cast.a, .{ .source = "local-file", .publicationStatus = "not-checked", .terms = terms, .hashAlgorithm = "sha256", .verified = true, .document = document, .file = out }));
+    }
     var remote = try rpc.Rpc.init(cast.a, cast.io, cast.rpc, cast.chain, cast.instance);
     defer remote.deinit();
     try remote.pin(cast.block, 0);
@@ -122,6 +130,13 @@ pub fn inspect(cast: *Cast, cat: contracts.Catalog, args: *Args, p: []const []co
     if (!try remote.canonical(remote.block)) return error.ChainReorganizedRetrySync;
     if (out) |path| try c.write(cast.io, path, document, false);
     return c.parse(cast.a, try c.encode(cast.a, .{ .chainId = cast.chain, .registry = cast.instance, .block = remote.block, .terms = terms, .hashAlgorithm = "sha256", .verified = true, .document = document, .file = out }));
+}
+pub fn offlineRequest(args: Args, p: []const []const u8) bool {
+    if (p.len < 2 or !c.eq(u8, p[0], "terms") or !c.eq(u8, p[1], "document")) return false;
+    for (args.options) |option| {
+        if (c.eq(u8, option.key, "offline") or (p.len == 4 and c.eq(u8, option.key, "document-file"))) return true;
+    }
+    return false;
 }
 fn acceptanceInput(a: c.A, io: std.Io, args: *Args, p: []const []const u8) !?c.Value {
     const file = args.get("args-file");
@@ -177,4 +192,31 @@ test "IPFS terms URLs validate CIDs and cannot escape the selected gateway" {
         try std.testing.expectError(error.UnsupportedTermsUri, documentUrl(a, uri, "https://example.test/ipfs"));
     }
     try std.testing.expectError(error.InvalidIpfsGateway, documentUrl(a, "ipfs://" ++ cid, "https://user:password@example.test/ipfs"));
+}
+
+test "documented acceptance commands select one published digest" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const digest = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    var args = try Args.parse(a, &.{});
+    try std.testing.expect((try acceptanceInput(a, std.testing.io, &args, &.{ "terms", "accept-terms" })) == null);
+    try std.testing.expectEqualStrings(digest, try c.string((try acceptanceInput(a, std.testing.io, &args, &.{ "terms", "accept-terms", digest })).?));
+    args = try Args.parse(a, &.{ "--document-hash", digest });
+    try std.testing.expectEqualStrings(digest, try c.string((try acceptanceInput(a, std.testing.io, &args, &.{ "terms", "accept-terms" })).?));
+    try args.finish();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const file = try a.print("{s}/terms.json", .{dir});
+    for ([_][]const u8{ try c.encode(a, .{ .documentHash = digest }), try c.encode(a, [_][]const u8{digest}) }) |source| {
+        try c.write(std.testing.io, file, source, true);
+        args = try Args.parse(a, &.{ "--args-file", file });
+        try std.testing.expectEqualStrings(digest, try c.string((try acceptanceInput(a, std.testing.io, &args, &.{ "terms", "accept-terms" })).?));
+        try args.finish();
+    }
+    args = try Args.parse(a, &.{});
+    try std.testing.expectError(error.WrongArgumentCount, acceptanceInput(a, std.testing.io, &args, &.{ "terms", "accept-terms", "1", digest }));
+    const cat = try contracts.Catalog.load(a);
+    for ([_][]const u8{ "getTermsContext", "instanceHasAcceptedInitialTerms", "hasAcceptedTerms", "getTermsAcceptance" }) |name| _ = try cat.find("terms", name);
 }

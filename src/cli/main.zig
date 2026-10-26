@@ -2,6 +2,7 @@ const std = @import("std");
 const ms = @import("miniscript");
 const c = @import("common.zig");
 const config = @import("config.zig");
+const effective_config = @import("effective_config.zig");
 const contracts = @import("contracts.zig");
 const Cast = @import("cast.zig").Cast;
 const Args = @import("args.zig").Args;
@@ -25,12 +26,6 @@ const json_schema = @import("json_schema.zig");
 const json_inputs = @import("json_inputs.zig");
 
 const help = @import("help.zig");
-
-fn requirePaymasterAccountMode(paymaster: ?[]const u8, via: ?[]const u8) !void {
-    if (paymaster != null and via != null and !c.eq(u8, via.?, "account")) {
-        return error.PaymasterRequiresAccountMode;
-    }
-}
 
 const App = struct {
     a: c.A,
@@ -228,8 +223,8 @@ const App = struct {
         const out = app.args.get("out");
         const opts = try deploy.Options.parse(app.a, &app.args, app.profile.get("factory") orelse try factories.address(app.a, .okFactory, app.cast.chain));
         try app.args.finish();
-        const deployment = try deploy.run(&app.cast, opts, app.dry, app.json);
-        if (out) |path| try c.write(app.io, path, try c.encode(app.a, deployment), true);
+        const deployment = try deploy.run(&app.cast, opts, app.dry, app.json, out);
+        if (out) |path| try c.write(app.io, path, try c.encode(app.a, deployment), !app.dry);
         const instance = c.field(deployment, "instance") orelse .null;
         if (instance != .null) {
             const registry = try c.string(c.field(deployment, "registry").?);
@@ -314,6 +309,8 @@ const App = struct {
         const only = app.args.get("only");
         const from = try rpc.integer(app.a, .{ .string = app.args.get("from-block") orelse "0" });
         const lookback = try rpc.integer(app.a, .{ .string = app.args.get("lookback") orelse "128" });
+        const backfill = if (app.args.get("backfill-from")) |text| try rpc.integer(app.a, .{ .string = text }) else null;
+        const log_source = std.meta.stringToEnum(@import("event_logs.zig").Source, app.args.get("log-source") orelse "auto") orelse return error.InvalidLogSource;
         const confirmations = try rpc.integer(app.a, .{ .string = app.args.get("confirmations") orelse "0" });
         const passphrase_file = app.args.get("passphrase-file");
         const explorer = programs.explorer(app.a, app.io, app.env, app.profile, app.dir, app.cast.chain, &app.args);
@@ -340,10 +337,11 @@ const App = struct {
         const with_operations = selected(only, "operations") and (only != null or app.profile.get("kv_address") != null);
         var unlocked: ?vault.Vault = if (with_operations) try app.unlockVault(db, passphrase_file, false) else null;
         defer if (unlocked) |*v| v.deinit();
-        try db.begin();
-        errdefer db.db.rollback();
+        var staged = try @import("staging.zig").Stage.open(db, app.io, app.dir);
+        defer staged.deinit();
+        if (unlocked) |*v| v.db = staged.db;
         const scope = try storage.scopeKey(app.a, app.cast.chain, app.cast.instance);
-        var engine: sync.Engine = .{ .a = app.a, .db = db, .rpc = &client, .cat = app.cat, .scope = scope, .full = full, .from_block = from, .lookback = lookback, .explorer = explorer };
+        var engine: sync.Engine = .{ .a = app.a, .db = staged.db, .rpc = &client, .cat = app.cat, .scope = scope, .full = full, .from_block = from, .lookback = lookback, .explorer = explorer, .log_source = log_source, .backfill_from = backfill, .progress = !app.json };
         var completed: std.ArrayList([]const u8) = .empty;
         for (sync.datasets) |dataset| {
             if (!selected(only, dataset.name)) continue;
@@ -363,12 +361,18 @@ const App = struct {
         }
         if (unlocked) |v| {
             try app.syncProgress("operations");
-            app.syncOperations(db, v, &client, engine, confirmations) catch |err| return app.syncFailure("operations", err);
+            app.syncOperations(v, &client, &engine, confirmations) catch |err| return app.syncFailure("operations", err);
             try completed.append(app.a, "operations");
         }
         if (!try client.canonical(client.block)) return error.ChainReorganizedRetrySync;
-        try db.db.commit();
-        try app.output(.{ .chainId = app.cast.chain, .instance = app.cast.instance, .block = client.block, .datasets = completed.items, .rpcRequests = client.requests });
+        try staged.commit();
+        var checkpoints: std.json.ObjectMap = .empty;
+        for (completed.items) |name| {
+            const kv = c.eq(u8, name, "operations");
+            const checkpoint_scope = if (kv) try storage.scopeKey(app.a, try app.kvChain(), app.profile.get("kv_address").?) else scope;
+            try checkpoints.put(app.a, name, (try db.checkpoint(checkpoint_scope, if (kv) "kv" else name)) orelse .null);
+        }
+        try app.output(.{ .chainId = app.cast.chain, .instance = app.cast.instance, .block = client.block, .datasets = completed.items, .checkpoints = c.Value{ .object = checkpoints }, .cacheByDataset = try @import("cache_metadata.zig").datasets(app.a, "sqlite-cache", .{ .object = checkpoints }), .rpcRequests = client.requests, .processedRecords = engine.processed, .peakPageArenaBytes = engine.peak_page_bytes });
     }
     fn syncProgress(app: *App, dataset: []const u8) !void {
         if (!app.json) try std.Io.File.stderr().writeStreamingAll(app.io, try app.a.print("Syncing {s}...\n", .{dataset}));
@@ -396,7 +400,7 @@ const App = struct {
         try @import("rpc_pool.zig").validateSelection(app.a, app.io, app.dir, app.profile_name, chain, url);
         return url;
     }
-    fn syncOperations(app: *App, db: storage.Store, v: vault.Vault, registry_client: *rpc.Rpc, base: sync.Engine, confirmations: u64) !void {
+    fn syncOperations(app: *App, v: vault.Vault, registry_client: *rpc.Rpc, base: *sync.Engine, confirmations: u64) !void {
         const address = app.profile.get("kv_address") orelse return error.KvAddressRequired;
         const chain = try app.kvChain();
         var remote = try rpc.Rpc.init(app.a, app.io, try app.kvRpc(), chain, address);
@@ -405,21 +409,21 @@ const App = struct {
         try remote.pin(if (chain == registry_client.chain) try rpc.quantity(app.a, registry_client.block.number) else null, if (chain == registry_client.chain) 0 else confirmations);
         const scope = try storage.scopeKey(app.a, chain, address);
         const auxiliary = try contracts.Catalog.loadAuxiliary(app.a);
-        var engine = base;
+        var engine = base.*;
+        engine.processed = 0;
+        engine.peak_page_bytes = 0;
+        defer {
+            base.processed += engine.processed;
+            base.peak_page_bytes = @max(base.peak_page_bytes, engine.peak_page_bytes);
+        }
         engine.scope = scope;
         engine.rpc = &remote;
         engine.cat = auxiliary;
         engine.explorer.chain = chain;
         try operations.synchronize(&engine, v);
-        const secrets = try operations.history(app.a, v, scope);
-        defer for (secrets) |*secret| secret.deinit();
-        const listing = try @import("operation_share.zig").merge(app.a, try operations.list(app.a, try db.entries(scope, "kv"), secrets, app.cast.chain, null), v, app.cast.chain, app.cast.instance, null);
         const interact = app.profile.forChain("interacts.", app.cast.chain) orelse app.profile.get("interact");
-        const statuses = if (interact) |target| try operations.statuses(app.a, registry_client, auxiliary, target, app.cast.instance, listing) else c.Value{ .object = .empty };
-        const key = try app.statusKey(scope);
-        const bytes = try c.encode(app.a, .{ .block = registry_client.block, .interact = interact, .values = statuses });
-        defer std.crypto.secureZero(u8, @constCast(bytes));
-        try v.put(key, bytes);
+        engine.rpc = registry_client;
+        try @import("status_sync.zig").run(&engine, v, app.cast.chain, app.cast.instance, interact);
         if (!try remote.canonical(remote.block)) return error.ChainReorganizedRetrySync;
     }
     fn statusKey(app: *App, scope: []const u8) ![]const u8 {
@@ -431,6 +435,7 @@ const App = struct {
         const audit = c.eq(u8, view_name, "audit");
         const passphrase_file = app.args.get("passphrase-file");
         const local_only = app.args.flag("local") or app.profile.get("kv_address") == null;
+        if (audit and local_only) return error.AuditViewRequiresJournal;
         const all_chains = app.args.flag("all-chains");
         _ = app.args.flag("offline");
         const safe = app.args.get("safe");
@@ -456,7 +461,7 @@ const App = struct {
                 try rows.append(app.a, item);
             }
             const start_index = @min(start_at, rows.items.len);
-            return app.output(.{ .total = rows.items.len, .entries = rows.items[start_index..@min(start_index + count, rows.items.len)], .source = "local-imports", .statusBlock = @as(?u64, null) });
+            return app.output(.{ .total = rows.items.len, .entries = rows.items[start_index..@min(start_index + count, rows.items.len)], .source = "local-imports", .statusBlock = @as(c.Value, .null), .cache = try @import("cache_metadata.zig").describe(app.a, "local-imports", .null, .null, false) });
         }
         const address = app.profile.get("kv_address") orelse return error.KvAddressRequired;
         const scope = try storage.scopeKey(app.a, try app.kvChain(), address);
@@ -487,10 +492,12 @@ const App = struct {
             try item.object.put(app.a, "status", status);
             try item.object.put(app.a, "statusBlock", c.field(snapshot, "block") orelse .null);
             try item.object.put(app.a, "statusRegistry", c.field(snapshot, "registry") orelse .null);
+            const imported = c.field(record, "source") != null;
+            try item.object.put(app.a, "cache", try @import("cache_metadata.zig").describe(app.a, if (imported) "local-imports" else "sqlite-cache", if (imported) .null else checkpoint, c.field(snapshot, "block") orelse .null, listing.unreadable > 0 or listing.invalid > 0));
             try rows.append(app.a, item);
         }
         const start_index = @min(start_at, rows.items.len);
-        try app.output(.{ .total = rows.items.len, .entries = rows.items[start_index..@min(start_index + count, rows.items.len)], .view = view_name, .journalCheckpoint = checkpoint_view.checkpoint, .rejectedCheckpoints = checkpoint_view.rejected, .checkpoint = checkpoint, .statusBlock = c.field(statuses, "block"), .unreadable = listing.unreadable, .invalid = listing.invalid });
+        try app.output(.{ .total = rows.items.len, .entries = rows.items[start_index..@min(start_index + count, rows.items.len)], .view = view_name, .journalCheckpoint = checkpoint_view.checkpoint, .rejectedCheckpoints = checkpoint_view.rejected, .checkpoint = checkpoint, .statusBlock = c.field(statuses, "block"), .cache = try @import("cache_metadata.zig").describe(app.a, if (audit) "sqlite-cache" else "journal-and-local-imports", checkpoint, c.field(statuses, "block") orelse .null, listing.unreadable > 0 or listing.invalid > 0), .unreadable = listing.unreadable, .invalid = listing.invalid });
     }
     fn checkpointCommand(app: *App, p: []const []const u8) !void {
         if (p.len < 3 or !@import("schema.zig").contains("prepare inspect publish", p[2])) return error.UnknownCommand;
@@ -536,14 +543,15 @@ const App = struct {
         const auxiliary = try contracts.Catalog.loadAuxiliary(app.a);
         if (!std.ascii.eqlIgnoreCase(try c.string((try remote.call(try auxiliary.find("kv", "passwordSigner"), &.{})).array.items[0]), try head.address(app.a))) return error.WrongKvSigner;
         if (!(try remote.call(try auxiliary.find("kv", "indexingEnabled"), &.{})).array.items[0].bool) return error.CheckpointRequiresIndexedSync;
-        var engine: sync.Engine = .{ .a = app.a, .db = db, .rpc = &remote, .cat = auxiliary, .scope = scope, .explorer = .{ .a = app.a, .io = app.io, .dir = app.dir, .chain = chain } };
-        try db.begin();
-        errdefer db.db.rollback();
+        var staged = try @import("staging.zig").Stage.open(db, app.io, app.dir);
+        defer staged.deinit();
+        v.db = staged.db;
+        var engine: sync.Engine = .{ .a = app.a, .db = staged.db, .rpc = &remote, .cat = auxiliary, .scope = scope, .explorer = .{ .a = app.a, .io = app.io, .dir = app.dir, .chain = chain } };
         try operations.synchronize(&engine, v);
         const secrets = try operations.history(app.a, v, scope);
         defer for (secrets) |*secret| secret.deinit();
-        const report = try actions.prepare(&app.cast, &remote, v, scope, secrets, try db.entries(scope, "kv"), c.field(c.field((try db.checkpoint(scope, "kv")).?, "cursor").?, "counts").?, confirmations, chunk_size, keep_all);
-        try db.db.commit();
+        const report = try actions.prepare(&app.cast, &remote, v, scope, secrets, try staged.db.entries(scope, "kv"), c.field(c.field((try staged.db.checkpoint(scope, "kv")).?, "cursor").?, "counts").?, confirmations, chunk_size, keep_all);
+        try staged.commit();
         return app.output(report);
     }
     fn operationsCommand(app: *App, p: []const []const u8) !void {
@@ -556,6 +564,7 @@ const App = struct {
         app.cast.instance = app.profile.forChain("interacts.", app.cast.chain) orelse app.profile.get("interact") orelse return error.InteractAddressRequired;
         app.cast.checked = false;
         const client: Client = .{ .cast = &app.cast, .cat = try contracts.Catalog.loadAuxiliary(app.a), .group = "interact" };
+        if (c.eq(u8, p[1], "reconcile")) return app.output(try @import("proposal_reconcile.zig").run(client, registry, &app.args, p[2], app.dry));
         try client.boundInteract(registry);
         if (@import("schema.zig").contains("import export export-local", p[1])) {
             const shares = @import("operation_share.zig");
@@ -647,10 +656,10 @@ const App = struct {
             if (out) |path| try c.write(app.io, path, try c.encode(app.a, report), false);
             return app.output(report);
         }
-        if (!@import("schema.zig").contains("prepare import export list status commit reveal cancel expire reconcile", verb)) return error.UnknownCommand;
+        if (!@import("schema.zig").contains("prepare import export list archives archive status commit reveal cancel expire reconcile", verb)) return error.UnknownCommand;
         const prepare = c.eq(u8, verb, "prepare");
         const importing = c.eq(u8, verb, "import");
-        const list = c.eq(u8, verb, "list");
+        const list = c.eq(u8, verb, "list") or c.eq(u8, verb, "archives");
         const reconcile = c.eq(u8, verb, "reconcile");
         const exporting = c.eq(u8, verb, "export");
         if (p.len != @as(usize, if (prepare or reconcile) 4 else if (list) 2 else 3)) return error.WrongArgumentCount;
@@ -711,7 +720,7 @@ const App = struct {
             if (!app.dry) try workflow.save(v, app.cast.chain, app.cast.instance, draft, false);
             return app.output(report);
         }
-        const drafts = try workflow.load(v, app.cast.chain, app.cast.instance);
+        const drafts = if (c.eq(u8, verb, "archives")) try workflow.archives(v, app.cast.chain, app.cast.instance) else try workflow.load(v, app.cast.chain, app.cast.instance);
         if (list) {
             var rows = std.json.Array.init(app.a);
             for (drafts.object.values()) |draft| {
@@ -721,7 +730,8 @@ const App = struct {
             if (out) |path| try c.write(app.io, path, try c.encode(app.a, rows.items), false);
             return app.output(rows.items);
         }
-        var draft = drafts.object.get(try c.string(try codec.word(app.a, .{ .string = p[2] }))) orelse return error.CommitmentDraftNotFound;
+        const draft_id = try c.string(try codec.word(app.a, .{ .string = p[2] }));
+        var draft = drafts.object.get(draft_id) orelse (if (exporting) try workflow.archived(v, app.cast.chain, app.cast.instance, draft_id) else null) orelse return error.CommitmentDraftNotFound;
         try codec.validate(app.a, draft, app.cast.chain, app.cast.instance);
         if (exporting) {
             try c.write(app.io, out.?, try c.encode(app.a, draft), false);
@@ -769,14 +779,16 @@ const App = struct {
             var remote = try rpc.Rpc.init(app.a, app.io, kv_cast.rpc, chain, address);
             defer remote.deinit();
             try remote.pin(null, 0);
-            var engine: sync.Engine = .{ .a = app.a, .db = db, .rpc = &remote, .cat = try contracts.Catalog.loadAuxiliary(app.a), .scope = scope, .explorer = explorer };
+            var staged = try @import("staging.zig").Stage.open(db, app.io, app.dir);
+            defer staged.deinit();
+            v.db = staged.db;
+            defer v.db = db;
+            var engine: sync.Engine = .{ .a = app.a, .db = staged.db, .rpc = &remote, .cat = try contracts.Catalog.loadAuxiliary(app.a), .scope = scope, .explorer = explorer };
             const current_signer = (try remote.call(try engine.cat.find("kv", "passwordSigner"), &.{})).array.items[0];
             if (!std.ascii.eqlIgnoreCase(try c.string(current_signer), try head.address(app.a))) return error.WrongKvSigner;
-            try db.begin();
-            errdefer db.db.rollback();
             try operations.synchronize(&engine, v);
             if (!try remote.canonical(remote.block)) return error.ChainReorganizedRetrySync;
-            try db.db.commit();
+            try staged.commit();
         }
         const context: @import("recipient_journal.zig").Context = .{ .storageChainId = chain, .kvAddress = address, .executionChainId = app.cast.chain, .registryAddress = app.cast.instance, .policyId = policy, .vault = account };
         const secrets = try operations.history(app.a, v, scope);
@@ -980,7 +992,8 @@ const App = struct {
         if (count > 1000) return error.PageTooLarge;
         try app.args.finish();
         const page = try db.page(scope, name, start_at, count);
-        if (c.eq(u8, name, "users")) try app.output(.{ .total = page.total, .users = page.values, .checkpoint = checkpoint }) else try app.output(.{ .total = page.total, .entries = page.values, .checkpoint = checkpoint });
+        const cache = try @import("cache_metadata.zig").describe(app.a, "sqlite-cache", checkpoint, .null, false);
+        if (c.eq(u8, name, "users")) try app.output(.{ .total = page.total, .users = page.values, .checkpoint = checkpoint, .cache = cache }) else try app.output(.{ .total = page.total, .entries = page.values, .checkpoint = checkpoint, .cache = cache });
         return true;
     }
     fn result(app: *App, value: c.Value) !void {
@@ -1031,8 +1044,7 @@ const App = struct {
         if (c.eq(u8, p[1], "create")) {
             try config.save(.{}, app.a, app.io, app.dir, p[2], false);
         } else if (c.eq(u8, p[1], "use")) {
-            _ = try c.read(app.a, app.io, try config.file(app.a, app.dir, p[2]));
-            try c.write(app.io, try app.a.print("{s}/active", .{app.dir}), p[2], true);
+            try config.activate(app.a, app.io, app.dir, p[2]);
         } else return error.UnknownCommand;
         try app.output(.{ .profile = p[2] });
     }
@@ -1061,6 +1073,10 @@ const App = struct {
             return configuration.exportFile(app.a, app.io, app.env, app.dir, app.profile, if (p.len == 3) p[2] else out, password_file, try app.colorEnabled());
         }
         try app.args.finish();
+        if (c.eq(u8, p[1], "explain")) {
+            if (p.len > 3) return error.UnexpectedArgument;
+            return app.output(.{ .profile = app.profile_name, .directory = app.dir, .settings = try effective_config.report(app.a, app.args, app.env, app.profile, if (p.len == 3) p[2] else null) });
+        }
         if (c.eq(u8, p[1], "show")) {
             if (p.len != 2) return error.UnexpectedArgument;
             if (app.json) {
@@ -1088,7 +1104,7 @@ const App = struct {
             const secret = c.eq(u8, p[2], "etherscan_api_key") or c.eq(u8, p[2], "rpc_url") or c.eq(u8, p[2], "kv_rpc_url") or std.mem.startsWith(u8, p[2], "rpc.");
             return app.output(.{ .key = p[2], .value = if (secret) "<configured>" else value });
         } else return error.UnknownCommand;
-        try app.output(.{ .profile = app.profile_name, .updated = p[2] });
+        try app.output(.{ .profile = app.profile_name, .updated = p[2], .effective = try effective_config.report(app.a, app.args, app.env, app.profile, null) });
     }
     fn colorEnabled(app: *App) !bool {
         return display.enabled(app.color, app.json, try std.Io.File.stdout().supportsAnsiEscapeCodes(app.io), app.env);
@@ -1306,12 +1322,21 @@ const App = struct {
             if (try renderer.command(p)) return renderer.print(app.io);
             return app.generic(p, true);
         }
+        if (app.estimate) try requireEstimateCommand(app.cat, p);
+        if (c.eq(u8, p[0], "doctor")) {
+            if (p.len != 1 or app.dry) return error.WrongArgumentCount;
+            try app.args.finish();
+            const report = try @import("doctor.zig").run(&app.cast);
+            try app.output(report);
+            if (!c.field(report, "ok").?.bool) return error.DependencyCheckFailed;
+            return;
+        }
         const local_command = @import("schema.zig").contains("rpc config profile logs search id artifacts completions __completion-session status instances", p[0]) or
             (c.eq(u8, p[0], "accounts") and p.len == 1) or
             (p.len > 1 and c.eq(u8, p[0], "operations") and c.eq(u8, p[1], "list")) or
             (p.len > 1 and c.eq(u8, p[0], "transactions") and c.eq(u8, p[1], "list")) or
             (p.len > 2 and c.eq(u8, p[0], "operations") and c.eq(u8, p[1], "checkpoint") and c.eq(u8, p[2], "inspect")) or
-            (p.len > 1 and c.eq(u8, p[0], "commitments") and @import("schema.zig").contains("template prepare import export list", p[1])) or
+            (p.len > 1 and c.eq(u8, p[0], "commitments") and @import("schema.zig").contains("template prepare import export list archives", p[1])) or
             (p.len > 1 and c.eq(u8, p[0], "facets") and c.eq(u8, p[1], "catalog"));
         const offline_recipient_list = blk: {
             if (p.len > 1 and c.eq(u8, p[0], "recipients") and c.eq(u8, p[1], "list")) for (app.args.options) |option| {
@@ -1319,7 +1344,7 @@ const App = struct {
             };
             break :blk false;
         };
-        if (!local_command and !offline_recipient_list) try @import("rpc_pool.zig").validateSelection(app.a, app.io, app.dir, app.profile_name, app.cast.chain, app.cast.rpc);
+        if (!local_command and !offline_recipient_list and !@import("terms.zig").offlineRequest(app.args, p)) try @import("rpc_pool.zig").validateSelection(app.a, app.io, app.dir, app.profile_name, app.cast.chain, app.cast.rpc);
         if (c.eq(u8, p[0], "completions")) return app.completionCommand(p);
         if (c.eq(u8, p[0], "__completion-session")) {
             const ttl = try std.fmt.parseInt(u64, app.args.get("ttl") orelse "900", 10);
@@ -1628,6 +1653,34 @@ const App = struct {
 
 const alias = @import("schema.zig").alias;
 
+fn requireEstimateCommand(cat: contracts.Catalog, p: []const []const u8) !void {
+    const contains = @import("schema.zig").contains;
+    if (p.len == 1 and c.eq(u8, p[0], "deploy")) return;
+    if (p.len < 2) return error.EstimateNotApplicable;
+    const group = p[0];
+    const verb = p[1];
+    const previews = [_][2][]const u8{
+        .{ "operations", "propose execute simulate approve withdraw direct publish" },
+        .{ "accounts", "create import fund" },
+        .{ "safes", "create import fund" },
+        .{ "auth", "create" },
+        .{ "kv", "create" },
+        .{ "tokens", "configure set-chainlink-native-feed" },
+        .{ "security-council", "configure" },
+        .{ "upgrade", "deploy propose release approve execute cancel" },
+        .{ "facets", "deploy plan apply" },
+        .{ "recipients", "authorize revoke" },
+        .{ "interactions", "publish activate deactivate" },
+        .{ "transactions", "cancel speed-up" },
+    };
+    for (previews) |entry| if (c.eq(u8, group, entry[0]) and contains(entry[1], verb)) return;
+    if (c.eq(u8, group, "policies") and c.eq(u8, verb, "program") and p.len > 2 and contains("publish clear", p[2])) return;
+    // Cached lists do not expose an envelope. Generic ABI reads do when
+    // --estimate implies --dry-run, so they remain valid estimation inputs.
+    if (c.eq(u8, verb, "list")) return error.EstimateNotApplicable;
+    _ = cat.find(group, alias(group, verb)) catch return error.EstimateNotApplicable;
+}
+
 fn selected(only: ?[]const u8, name: []const u8) bool {
     var parts = std.mem.splitScalar(u8, only orelse return true, ',');
     while (parts.next()) |part| if (c.eq(u8, part, name)) return true;
@@ -1637,7 +1690,14 @@ fn selected(only: ?[]const u8, name: []const u8) bool {
 pub fn main(init: std.process.Init) void {
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
-    start(init, arena.allocator()) catch |err| {
+    var failure: @import("errors.zig").Context = .{};
+    start(init, arena.allocator(), &failure) catch |err| {
+        if (failure.json) {
+            const encoded = failure.encode(arena.allocator(), err, errorMessage(err) orelse @errorName(err)) catch "{\"schemaVersion\":1,\"ok\":false,\"error\":{\"code\":\"OutOfMemory\"}}";
+            std.Io.File.stderr().writeStreamingAll(init.io, encoded) catch {};
+            std.Io.File.stderr().writeStreamingAll(init.io, "\n") catch {};
+            std.process.exit(1);
+        }
         var buffer: [1024]u8 = undefined;
         var stderr = std.Io.File.stderr().writerStreaming(init.io, &buffer);
         stderr.interface.print("chainwall: {s}\n", .{errorMessage(err) orelse @errorName(err)}) catch {};
@@ -1657,7 +1717,8 @@ fn errorMessage(err: anyerror) ?[]const u8 {
         error.NativeFeedStale => "The Chainlink feed exceeds its preset maximum age or the Registry age limit.",
         error.NativeFeedChainChanged => "The chain changed during feed validation. Retry tokens set-chainlink-native-feed; no transaction was submitted.",
         error.NoInitialTerms => "The selected Registry has no initialized initial document.",
-        error.TermsDocumentHashMismatch => "The document SHA-256 does not match the onchain terms hash. No document was saved.",
+        error.TermsDocumentHashMismatch => "The document SHA-256 does not match the expected terms hash. No document was saved.",
+        error.OfflineTermsInputsRequired => "Offline terms checking requires an explicit IPFS URI, SHA-256 digest, and --document-file FILE.",
         error.UnsupportedTermsUri => "Terms must use an IPFS URI. Use --document-file FILE to verify a downloaded document against the onchain hash.",
         error.TermsDocumentHttpFailure => "The IPFS gateway did not return a document. Select another --ipfs-gateway URL or use --document-file FILE.",
         error.NoTransactionLogs => "No saved transaction logs. Logs are created when a command submits a transaction.",
@@ -1807,7 +1868,7 @@ fn errorMessage(err: anyerror) ?[]const u8 {
         else => null,
     };
 }
-fn start(init: std.process.Init, a: c.A) !void {
+fn start(init: std.process.Init, a: c.A, failure: *@import("errors.zig").Context) !void {
     var iterator = try init.minimal.args.iterateAllocator(a);
     defer iterator.deinit();
     _ = iterator.next();
@@ -1818,7 +1879,22 @@ fn start(init: std.process.Init, a: c.A) !void {
         completions.run(a, init.io, init.environ_map, argv.items[offset..]) catch {};
         return;
     }
+    for (argv.items) |arg| {
+        if (c.eq(u8, arg, "--")) break;
+        if (c.eq(u8, arg, "--json")) failure.json = true;
+    }
     var args = try Args.parse(a, argv.items);
+    if (args.positional.len > 0 and config.validName(args.positional[0])) failure.command = args.positional[0];
+    for (@import("schema.zig").commands) |entry| {
+        var words = std.mem.splitScalar(u8, entry.path, ' ');
+        var count: usize = 0;
+        var matches = true;
+        while (words.next()) |word| : (count += 1) if (count >= args.positional.len or !c.eq(u8, word, args.positional[count])) {
+            matches = false;
+            break;
+        };
+        if (matches and entry.path.len > failure.command.len) failure.command = entry.path;
+    }
     const env = init.environ_map;
     const dir = args.get("config-dir") orelse env.get("CHAINWALL_CONFIG_DIR") orelse if (env.get("XDG_CONFIG_HOME")) |xdg| try a.print("{s}/chainwall", .{xdg}) else try a.print("{s}/.config/chainwall", .{env.get("HOME") orelse return error.HomeDirectoryMissing});
     const profile_name = args.get("profile") orelse env.get("CHAINWALL_PROFILE") orelse blk: {
@@ -1828,7 +1904,10 @@ fn start(init: std.process.Init, a: c.A) !void {
         };
         break :blk c.trim(active);
     };
-    const profile = try config.load(a, init.io, dir, profile_name);
+    const profile = try config.loadForCommand(a, init.io, dir, profile_name, args.positional);
+    const catalog = try contracts.Catalog.load(a);
+    if (json_inputs.peek(args, "via") != null and !@import("schema.zig").acceptsRoute(args.positional)) return error.ExecutionRouteNotApplicable;
+    if (json_inputs.peek(args, "estimate") != null and json_inputs.peek(args, "help") == null and json_inputs.peek(args, "version") == null) try requireEstimateCommand(catalog, args.positional);
     const interactive = args.flag("interactive");
     const editor_override = args.get("editor");
     const edit_input = args.get("edit-input");
@@ -1841,20 +1920,21 @@ fn start(init: std.process.Init, a: c.A) !void {
         if (json_inputs.peek(args, "schema") != null) return error.ConflictingArguments;
         var validator = try json_schema.Validator.init(a);
         const binding = try json_inputs.selected(validator, args, try contracts.Catalog.load(a), edit_input);
-        const preferred = editor_override orelse env.get("CHAINWALL_EDITOR") orelse profile.get("editor") orelse env.get("VISUAL") orelse env.get("EDITOR") orelse "vi";
+        const preferred = effective_config.get(&(try effective_config.resolve(args, env, profile)), "editor").?;
         draft = try @import("editor.zig").edit(&validator, init.io, env, dir, preferred, &args, binding);
     }
-    const chain = args.get("chain") orelse env.get("CHAINWALL_CHAIN") orelse profile.get("chain") orelse "ethereum";
+    const execution = try @import("command_options.zig").Execution.parse(&args);
+    const effective = try effective_config.resolve(args, env, profile);
+    for ([_][]const u8{ "chain", "rpc-url", "instance", "account", "keystore", "password-file" }) |key| _ = args.get(key);
+    const chain = effective_config.get(&effective, "chain").?;
     const selected_chain = try config.chainId(chain);
-    const rpc_url = args.get("rpc-url") orelse env.get("CHAINWALL_RPC_URL") orelse profile.forChain("rpc.", selected_chain) orelse if (selected_chain == try config.chainId(profile.get("chain") orelse "ethereum")) profile.get("rpc_url") orelse "" else "";
-    const instance = args.get("instance") orelse env.get("CHAINWALL_INSTANCE") orelse profile.forChain("instances.", selected_chain) orelse profile.get("instance") orelse "";
+    const rpc_url = effective_config.get(&effective, "rpc_url") orelse "";
+    const instance = effective_config.get(&effective, "instance") orelse "";
     const unlocked = args.flag("unlocked");
-    const explicit_account = args.get("account");
-    const explicit_keystore = args.get("keystore");
-    const account = explicit_account orelse if (unlocked or explicit_keystore != null) null else env.get("CHAINWALL_ACCOUNT") orelse profile.get("account");
-    const keystore = explicit_keystore orelse if (unlocked or account != null) null else profile.get("keystore");
+    const account = effective_config.get(&effective, "account");
+    const keystore = effective_config.get(&effective, "keystore");
     const color = std.meta.stringToEnum(display.Color, args.get("color") orelse "auto") orelse return error.InvalidColorMode;
-    var app: App = .{ .a = a, .io = init.io, .env = env, .dir = dir, .profile_name = profile_name, .profile = profile, .cat = try contracts.Catalog.load(a), .cast = .{ .a = a, .io = init.io, .env = env, .rpc = rpc_url, .chain = try config.chainId(chain), .instance = instance, .account = account, .keystore = keystore, .password_file = args.get("password-file") orelse profile.get("password_file"), .from = args.get("from"), .block = args.get("block"), .unlocked = unlocked }, .chain = chain, .json = args.flag("json"), .dry = args.flag("dry-run"), .args = undefined };
+    var app: App = .{ .a = a, .io = init.io, .env = env, .dir = dir, .profile_name = profile_name, .profile = profile, .cat = catalog, .cast = .{ .a = a, .io = init.io, .env = env, .rpc = rpc_url, .chain = try config.chainId(chain), .instance = instance, .account = account, .keystore = keystore, .password_file = effective_config.get(&effective, "password_file"), .from = args.get("from"), .block = args.get("block"), .unlocked = unlocked }, .chain = chain, .json = args.flag("json"), .dry = args.flag("dry-run"), .args = undefined };
     app.color = color;
     if (args.get("schema") != null) {
         const validator = try json_schema.Validator.init(a);
@@ -1862,6 +1942,11 @@ fn start(init: std.process.Init, a: c.A) !void {
         return app.output(try validator.document(binding.rule));
     }
     var input_validator = try json_schema.Validator.init(a);
+    input_validator.quiet = failure.json;
+    errdefer if (input_validator.failure) |detail| {
+        failure.field = if (detail.path.len == 0) "/" else detail.path;
+        failure.detail = detail.message;
+    };
     if (args.positional.len > 0 and c.eq(u8, args.positional[0], "schemas")) {
         const p = args.positional;
         const out = args.get("out");
@@ -1889,15 +1974,10 @@ fn start(init: std.process.Init, a: c.A) !void {
     if (app.cast.wait_timeout > 86400 or app.cast.tx_confirmations == 0) return error.InvalidTransactionMonitorOptions;
     app.cast.nonce = try Cast.parseNonce(args.get("nonce"));
     app.auth_browser = .{ .app_url = args.get("app-url"), .page_url = args.get("approval-url"), .open_browser = !args.flag("no-browser"), .timeout_seconds = try std.fmt.parseInt(u32, args.get("approval-timeout") orelse "300", 10) };
-    app.bundler_url = args.get("bundler-url");
-    app.paymaster = args.get("paymaster");
-    if (app.paymaster != null and app.bundler_url == null) return error.PaymasterRequiresBundler;
-    if (app.paymaster) |paymaster| {
-        try c.address(paymaster);
-        if (args.get("auth-profile") == null) return error.PaymasterRequiresAuthProfile;
-    }
-    try requirePaymasterAccountMode(app.paymaster, args.get("via"));
-    if (args.get("auth-profile")) |path| {
+    app.cast.route = execution.route;
+    app.bundler_url = execution.bundler;
+    app.paymaster = execution.paymaster;
+    if (execution.auth_profile) |path| {
         const auth_profile = try json_schema.read(a, init.io, "auth-profile", path);
         try @import("auth_signer.zig").validate(a, auth_profile, selected_chain, instance, false);
         app.cast.auth = .{ .profile = auth_profile, .registry = instance, .bundler = app.bundler_url, .paymaster = app.paymaster, .browser = app.auth_browser };
@@ -1911,11 +1991,15 @@ fn start(init: std.process.Init, a: c.A) !void {
     var journal: logs.Journal = .{ .a = a, .io = init.io, .dir = dir, .profile = profile_name, .command = label };
     app.cast.journal = &journal;
     app.run() catch |err| {
+        failure.recovery(a, journal) catch {};
+        failure.detail = app.cast.diagnostic;
         journal.finish(err) catch |log_err| {
             try std.Io.File.stderr().writeStreamingAll(init.io, try a.print("Could not update transaction log: {s}\n", .{@errorName(log_err)}));
         };
-        if (journal.path) |path| try std.Io.File.stderr().writeStreamingAll(init.io, try a.print("Log: {s}\n", .{path}));
-        if (app.cast.diagnostic) |diagnostic| try std.Io.File.stderr().writeStreamingAll(init.io, diagnostic);
+        if (!failure.json) {
+            if (journal.path) |path| try std.Io.File.stderr().writeStreamingAll(init.io, try a.print("Log: {s}\n", .{path}));
+            if (app.cast.diagnostic) |diagnostic| try std.Io.File.stderr().writeStreamingAll(init.io, diagnostic);
+        }
         return err;
     };
     try journal.finish(null);
@@ -1924,6 +2008,19 @@ fn start(init: std.process.Init, a: c.A) !void {
 }
 
 test {
+    _ = @import("preflight.zig");
+    _ = @import("errors.zig");
+    _ = @import("command_options.zig");
+    _ = @import("foundry_output.zig");
+    _ = @import("provider_tests.zig");
+    _ = @import("terms.zig");
+    _ = @import("instance_views.zig");
+    _ = @import("operation_share.zig");
+    _ = @import("commitments.zig");
+    _ = @import("rpc_pool.zig");
+    _ = @import("transaction_watch.zig");
+    _ = @import("explorer.zig");
+    _ = @import("cast.zig");
     _ = @import("json_inputs.zig");
     _ = @import("json_schema.zig");
     _ = @import("recipient_journal.zig");
@@ -1931,6 +2028,7 @@ test {
     _ = @import("completion_session.zig");
     _ = @import("account_views.zig");
     _ = @import("transaction_decode.zig");
+    _ = @import("transaction_actions.zig");
     _ = @import("upgrade_actions.zig");
     _ = @import("browser_approval.zig");
     _ = @import("abi_codec.zig");
@@ -1948,16 +2046,50 @@ test {
     _ = @import("labels.zig");
 }
 
-test "customer paymaster accepts only account execution mode" {
-    try requirePaymasterAccountMode(null, "module");
-    try requirePaymasterAccountMode("0x1111111111111111111111111111111111111111", null);
-    try requirePaymasterAccountMode("0x1111111111111111111111111111111111111111", "account");
-    try std.testing.expectError(
-        error.PaymasterRequiresAccountMode,
-        requirePaymasterAccountMode("0x1111111111111111111111111111111111111111", "safe"),
-    );
-    try std.testing.expectError(
-        error.PaymasterRequiresAccountMode,
-        requirePaymasterAccountMode("0x1111111111111111111111111111111111111111", "module"),
-    );
+test "audit listing rejects local-only sources before opening storage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    for ([_]bool{ false, true }) |explicit| {
+        var app: App = .{ .a = a, .io = std.testing.io, .env = &env, .dir = dir, .profile_name = "default", .profile = .{}, .cat = try contracts.Catalog.load(a), .cast = .{ .a = a, .io = std.testing.io, .env = &env }, .args = try Args.parse(a, if (explicit) &.{ "--view", "audit", "--local" } else &.{ "--view", "audit" }), .chain = "arbitrum", .json = true, .dry = false };
+        if (explicit) try app.profile.set(a, "kv_address", "0x1111111111111111111111111111111111111111");
+        try std.testing.expectError(error.AuditViewRequiresJournal, app.operationsList());
+        try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.testing.io, "chainwall.sqlite3", .{}));
+    }
+}
+
+test "inapplicable estimation cannot mutate profiles or configuration" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    const cat = try contracts.Catalog.load(a);
+    try config.save(try config.Profile.parse(a, "editor='vi'"), a, std.testing.io, dir, "default", false);
+    for ([_][]const []const u8{ &.{ "config", "set", "editor", "changed" }, &.{ "profile", "create", "new" } }) |command| {
+        var app: App = .{ .a = a, .io = std.testing.io, .env = &env, .dir = dir, .profile_name = "default", .profile = try config.load(a, std.testing.io, dir, "default"), .cat = cat, .cast = .{ .a = a, .io = std.testing.io, .env = &env }, .args = try Args.parse(a, command), .chain = "arbitrum", .json = true, .dry = true, .estimate = true };
+        try std.testing.expectError(error.EstimateNotApplicable, app.run());
+    }
+    try std.testing.expectEqualStrings("vi", (try config.load(a, std.testing.io, dir, "default")).get("editor").?);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.testing.io, "new.toml", .{}));
+    try requireEstimateCommand(cat, &.{ "operations", "execute", "proposal.json" });
+    try requireEstimateCommand(cat, &.{ "users", "add", "0x1111111111111111111111111111111111111111" });
+    try requireEstimateCommand(cat, &.{"deploy"});
+    try requireEstimateCommand(cat, &.{ "facets", "apply", "plan.json" });
+    try requireEstimateCommand(cat, &.{ "facets", "plan", "release" });
+    try requireEstimateCommand(cat, &.{ "policies", "program", "publish", "policy", "program.json" });
+    try std.testing.expectError(error.EstimateNotApplicable, requireEstimateCommand(cat, &.{ "facets", "check", "plan.json" }));
+    try std.testing.expectError(error.EstimateNotApplicable, requireEstimateCommand(cat, &.{ "operations", "list" }));
+}
+
+test {
+    _ = @import("effective_config.zig");
 }

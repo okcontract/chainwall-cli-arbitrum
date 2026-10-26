@@ -97,7 +97,7 @@ fn data(a: c.A, cat: contracts.Catalog, stage: Stage, opts: Options, registry: ?
     return .{ .method = method, .bytes = try abi.calldata(a, method.abi, values) };
 }
 
-pub fn run(cast: *Cast, opts: Options, dry: bool, quiet: bool) !c.Value {
+pub fn run(cast: *Cast, opts: Options, dry: bool, quiet: bool, out: ?[]const u8) !c.Value {
     const a = cast.a;
     const cat = try contracts.Catalog.loadDeployment(a);
     const first: Stage = if (opts.stage == .all) .bootstrap else opts.stage;
@@ -105,6 +105,7 @@ pub fn run(cast: *Cast, opts: Options, dry: bool, quiet: bool) !c.Value {
         const tx = try data(a, cat, first, opts, opts.registry);
         return c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .to = opts.factory, .stage = @tagName(first), .function = tx.method.signature, .data = tx.bytes, .nonce = cast.nonce, .remainingStages = if (opts.stage == .all) &[_][]const u8{ "prepare", "finalize" } else &[_][]const u8{} }));
     }
+    if (out) |path| try c.write(cast.io, path, try c.encode(a, .{ .state = "prepared", .chainId = cast.chain, .deployment = opts }), false);
     cast.instance = opts.factory;
     cast.checked = false;
     if (cast.block != null) return error.DeploymentRequiresLatestBlock;
@@ -135,6 +136,7 @@ pub fn run(cast: *Cast, opts: Options, dry: bool, quiet: bool) !c.Value {
         if (!quiet) try std.Io.File.stderr().writeStreamingAll(cast.io, try a.print("Deploying: {s}\n", .{@tagName(stage)}));
         const receipt = try cast.send(tx.bytes, null);
         try receipts.append(receipt);
+        if (out) |path| try c.write(cast.io, path, try c.encode(a, .{ .state = "mined", .chainId = cast.chain, .factory = opts.factory, .stage = @tagName(stage), .registry = registry, .deploymentKey = deployment_key, .receipts = c.Value{ .array = receipts } }), true);
         if (stage == .bootstrap) {
             const committed = try event(a, cat, receipt, opts.factory, "InstanceDeploymentKeyCommitted");
             if (!std.ascii.eqlIgnoreCase(try c.string(c.field(committed, "deploymentKey").?), deployment_key)) return error.DeploymentMismatch;
@@ -175,4 +177,28 @@ test "deployment validates explicit owner, salt, stage, and flags before sending
     try std.testing.expectError(error.DeploymentRegistryRequired, Options.parse(a, &args, opts.factory));
     args = try Args.parse(a, &.{ "--flags", "4" });
     try std.testing.expectError(error.UnsupportedDeploymentFlags, Options.parse(a, &args, opts.factory));
+}
+
+test "invalid deployment report destination fails before transport" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const path = try a.print("{s}/report.json", .{dir});
+    try c.write(std.testing.io, path, "existing report", false);
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    // Transport would fail with RpcUrlRequired if reached.
+    var cast: Cast = .{ .a = a, .io = std.testing.io, .env = &env, .chain = 42161 };
+    const opts: Options = .{ .factory = "0x1111111111111111111111111111111111111111", .stage = .prepare, .registry = "0x2222222222222222222222222222222222222222", .owner = null, .salt = null, .flags = 1 };
+    try std.testing.expectError(error.PathAlreadyExists, run(&cast, opts, false, true, path));
+    try std.testing.expectEqualStrings("existing report", try c.read(a, std.testing.io, path));
+    // A regular file cannot serve as an output directory.
+    if (run(&cast, opts, false, true, try a.print("{s}/child.json", .{path}))) |_| {
+        return error.ExpectedOutputFailure;
+    } else |err| {
+        try std.testing.expect(err != error.RpcUrlRequired);
+    }
 }

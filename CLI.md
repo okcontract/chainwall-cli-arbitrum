@@ -2,6 +2,18 @@
 
 For binary users, see the comprehensive [Chainwall CLI user manual](MANUAL.md).
 The CLI build installs it at `share/doc/chainwall/manual.md` alongside `bin/chainwall`.
+
+With `--json`, a failed command exits nonzero and writes a compact JSON error
+record as the final stderr line. Stdout retains any command report already
+produced (for example a failed simulation). Earlier stderr lines may contain
+transport progress. The error record has `schemaVersion: 1`, `ok: false`,
+`command`, and `error` with `code`, `message`, `field`, `retryable`, `detail`,
+and `recovery`. `field` is a JSON pointer for input validation, an option name
+when known, or null. Recovery includes the journal path, transaction and
+UserOperation hashes, and whether submission was attempted. When submission may
+have occurred, `retryable` is false: observe the saved hash before resubmitting.
+Unknown simulation reverts preserve `rawData` with `decoded: false`; known
+errors include both raw bytes and decoded fields.
 This document covers repository setup, implementation details, and development checks.
 For the companion `chainwall-lsp` binary and editor setup, see [LSP.md](LSP.md).
 
@@ -29,7 +41,9 @@ chainwall operations direct --schema --edit-input signatures-file
 `--schema` works without an input file or connection. `--edit-input` selects an
 auxiliary JSON option. ABI argument and constructor schemas derive from the embedded
 artifacts and support named objects and positional arrays. Use decimal strings for
-integers above JavaScript's safe integer range.
+integers above JavaScript's safe integer range. Integer JSON inputs must use plain
+decimal notation (for example, `12`); decimal points and exponents such as
+`12.0` or `1.20e1` are rejected during input validation.
 
 The binary embeds `src/cli/artifacts/input-schemas.json` and evaluates its bounded
 validation vocabulary offline. Input documents cannot supply executable schemas
@@ -93,7 +107,7 @@ chainwall transactions cancel "$TX_HASH"
 
 `list` is an offline snapshot for the selected chain. `track`, `refresh [HASH]`
 and `wait` recheck canonical RPC state without resubmitting. Replacement searches
-cover 64 blocks by default (`--lookback 0..1024`). An unavailable hash is `unknown`;
+scan at most 64 blocks per observation (`--lookback 0..1024`) in batches of 16.\nSaved submission context supplies the starting block, sender and nonce even if\nthe original hash disappeared. Otherwise the first scan covers the recent window.\n`replacementSearch.nextBlock` persists progress; later observations resume after\nchecking the saved anchor is canonical. A reorg restarts the scan. Zero disables\nblock scanning. An unavailable hash without recovery context is `unknown`;
 a consumed nonce without a discovered replacement is `nonce-used`. Neither proves
 success. Wait returns nonzero unless the original or a matching repriced payload
 has a successful, sufficiently confirmed receipt. Recovery does not automatically
@@ -124,9 +138,11 @@ file or `{chainId,to,data,value}` with `transactions estimate`; omit `to` for
 contract creation. `--from` avoids unlocking a wallet just to find its address.
 Signed execution requests need their real signatures before RPC estimation.
 
-Reports separate estimated execution cost from the maximum execution fee and
-include value, balance and a 20% default gas margin. Rollup L1 data charges and
-other chain-specific fees are excluded. Multi-stage workflows estimate the shown
+Reports separate `estimatedTransactionFeeWei` from `maximumTransactionFeeWei`,
+and include value, balance and a 20% default gas margin. On Arbitrum, the RPC gas
+estimate includes L2 execution and the L1 data posting component; do not add that
+component again. `maximumValueAndFeeWei` includes the transferred native value.
+Multi-stage workflows estimate the shown
 stage; later dependent stages need their prerequisites mined first. Passkey and
 UserOperation fee review remains in the existing browser approval flow.
 
@@ -217,6 +233,18 @@ Environment overrides: `CHAINWALL_PROFILE`, `CHAINWALL_CHAIN`,
 `CHAINWALL_CONFIG_DIR`. Config location also honors `XDG_CONFIG_HOME`, and
 `--config-dir` takes precedence. No public RPC endpoint is silently selected.
 
+`config explain [KEY] --json` reports the selected profile and directory, resolved
+startup values, the winning option/environment/profile key, and
+`shadowedProfileKeys`. Startup and this report use the same resolver. Flags precede
+environment values, then chain-specific profile bindings, then generic profile
+values and defaults. A generic `rpc_url` applies only to the profile's chain.
+Explicit keystore or unlocked mode suppresses a saved account; an account suppresses
+a saved keystore. RPC URLs remain redacted. Editor selection includes `VISUAL` and
+`EDITOR` after the saved editor. Workflow-specific settings are separately marked
+`scope: "stored-workflow-setting"`; they describe stored inputs, not live discovery.
+`config set` and `config unset` also return this explanation so a saved update
+shadowed by an environment value or chain binding is visible immediately.
+
 ## Private contract, token and interaction commitments
 
 ```sh
@@ -227,6 +255,8 @@ chainwall commitments list
 chainwall commitments commit "$COMMIT_HASH"
 chainwall commitments status "$COMMIT_HASH"
 chainwall commitments reveal "$COMMIT_HASH"
+chainwall commitments archive "$COMMIT_HASH"
+chainwall commitments archives
 ```
 
 `prepare` creates a cryptographically random 32-byte salt, calculates the same
@@ -237,6 +267,12 @@ or payload. The input is `{ "payload": {...}, "deadline": 1234567890 }`, with
 optional `deadline`, `forwarder`, and bytes32 `hint`. Deadlines are Unix seconds,
 default to seven days, and must be within 90 days. Public salt phrases and custom
 salts are deliberately unavailable for these private commitments.
+
+The active draft collection holds up to 1,024 entries. `archive HASH` frees a slot
+after checking that the commitment is absent or expired and has no pending action.
+The complete draft remains encrypted in the local archive. `archives` lists its
+summary; `export HASH --out FILE` also works for archived drafts. Import an export
+to restore an active draft when needed. Archival sends no blockchain transaction.
 
 Contract payloads contain `org`, `id`, `address`, and `version`, with optional
 `implementation` and bytes32 `label`. Versions accept up to 32 UTF-8 bytes or an
@@ -737,28 +773,55 @@ their keys and primary records, including full interaction bundles.
 Registry entity indexes exist independently of `indexingEnabled`. The optional
 flag controls the timelock strategy: indexed sync reads pending summaries and
 new executed summaries, then refreshes previously seen pending actions that
-left the queue. With indexing disabled, Etherscan V2 `getLogs` discovers queued
+left the queue. With indexing disabled, RPC `eth_getLogs` or Etherscan V2 `getLogs` discovers queued
 action IDs and RPC supplies their current summaries. Indexed discovery retains
 cancelled/expired actions it has observed; an action queued and cancelled wholly
 between two syncs is not discoverable through those indexes. It is not a complete
-event audit. The Etherscan strategy discovers those actions through queue logs.
+event audit. Log discovery finds those actions through queue logs.
 
 RPC calls are batched, decoded natively, and pinned with EIP-1898
 `blockHash`/`requireCanonical`. The provider must support JSON RPC batches and
 EIP-1898. A sync verifies the old checkpoint, resets after a reorg, and checks the
 new block again before committing all selected datasets together. Errors leave
-the prior snapshot intact. Each HTTP request has a 60-second deadline. Etherscan
+the prior snapshot intact. Sync, recipient refresh, checkpoint preparation and LSP
+metadata refresh perform network work against a private disk snapshot. The live
+SQLite write transaction only validates the source revision and applies changed
+cache/checkpoint/vault rows. A concurrent database update produces
+`DatabaseChangedRetrySync`; rerun the read to build from the newer snapshot.
+Temporary snapshot storage is proportional to the cache size and is removed when
+the operation finishes. Each HTTP request has a 60-second deadline. Etherscan
 pagination rejects repeated pages and subdivides full result windows or ranges
 that the explorer reports as too large to query;
 provider errors never count as empty history. Log block hashes are checked
 against the RPC chain before use. Explorer completeness still
 depends on the provider's index being current.
 
+`sync --log-source auto|rpc|explorer` selects event discovery. `auto` uses the
+configured explorer and falls back to RPC if it is unavailable; without an API
+key it uses RPC immediately. `rpc` requires no explorer credentials. RPC scans
+use ranges of at most 10,000 blocks and subdivide provider range/result limits.
+An overflowing single block fails explicitly. Logs must match the emitter,
+topic and requested range; duplicates and removed logs are rejected. Both
+backends verify log block hashes before committing. Checkpoint strategy records
+the backend actually used. ABI discovery still requires an explorer or supplied ABI.
+
 Explorer scans revisit the last 128 blocks by default to pick up delayed logs.
 `--lookback N` adjusts this overlap. Previously cached immutable KV values are
-not downloaded again. Use a larger overlap or `--full` if explorer lag exceeds
-that window.
+not downloaded again. `--backfill-from N` revisits older logs through the current
+snapshot without clearing cached records. It must be at or above `--from-block`.
+For example, `sync --only timelocks --log-source rpc --backfill-from 0` closes
+historical gaps left by explorer indexing lag when the configured lower bound is zero.
+Use `--full` to rebuild instead.
 Rate limits retry the same page with bounded backoff before failing the sync.
+
+Sync output includes dataset checkpoints. Their `block` is the current-state
+snapshot; log checkpoints also include `discovery` with the requested range,
+actual source, verified contiguous `completeFrom`/`completeThrough`, and
+`historyComplete` relative to the configured lower bound. Successful explorer
+responses never advance verified coverage: their `indexerCompleteThrough` is
+null because the API provides no completeness watermark. A recent snapshot
+therefore does not imply complete event history. RPC backfills can establish
+contiguous coverage; provider errors and reorganizations preserve the prior checkpoint.
 
 `--full` rebuilds selected snapshots. `--from-block N` bounds explorer discovery
 and is recorded in the checkpoint; changing it resets the affected snapshot.
@@ -834,7 +897,7 @@ journals use Keccak-derived keys, rotation payloads, pending identity checks,
 and deduplication. Unrelated
 KV entries are ignored; unreadable or invalid journals are counted in output.
 Indexed KV sync reads new keys per readable signer. Unindexed KV sync uses
-Etherscan `Wrote` logs. Neither path rereads unchanged immutable values.
+RPC or Etherscan `Wrote` logs. Neither path rereads unchanged immutable values.
 
 `kv_chain` defaults to the selected execution chain; `kv_rpc_url` defaults to
 its `[rpc]` entry or that chain's selected RPC. Storage and execution chains may
@@ -1052,14 +1115,16 @@ chainwall tokens configure acme/usdc --price-feed "$USD_FEED" --feed-max-age 360
 chainwall tokens configure acme/usdc --price-feed none --account admin
 ```
 
-`chainwall terms accept-terms` reads the current version and document hash from
-the selected deployed Registry and submits their acceptance using the configured
-signer, which needs `ADMIN_ROLE`. `--dry-run` performs the read and previews the
-transaction without signing. No current terms means no transaction. Pending terms
-are not selected automatically. Explicit `VERSION DOCUMENT_HASH`, named flags,
-and `--args-file` remain supported; explicit forms must supply both arguments.
-Use `terms get-current-terms` to inspect the document URI and
-`terms instance-has-accepted-current-terms` to check acceptance afterward.
+`chainwall terms accept-terms` selects the Registry's initial document, verifies
+its exact bytes against the published SHA-256 digest, and submits that digest
+using the configured signer, which needs `ADMIN_ROLE`. `--dry-run` verifies the
+document and previews the transaction without signing. To select another
+published document, use `terms accept-terms DOCUMENT_HASH`, `--document-hash HASH`,
+or `--args-file FILE` containing `{ "documentHash": "0x..." }` or `["0x..."]`.
+The command resolves the document's canonical URI onchain; unpublished hashes
+are rejected. Use `terms get-terms-context` to inspect the initial document and
+`terms instance-has-accepted-initial-terms` to check initial acceptance. Later
+acceptance can be checked with `terms has-accepted-terms DOCUMENT_HASH`.
 
 ```sh
 chainwall users contains "$USER_ADDRESS"
@@ -1190,3 +1255,85 @@ zig build test
 Contract artifacts and input schemas are bundled under `src/cli/artifacts/`.
 Changes to these files must keep ABIs, deployment bytecode, release manifests,
 and expected runtime hashes consistent.
+
+Native RPC reads retry transient connection failures, HTTP 408/429/500/502/503/504,
+and explicit provider rate-limit errors up to three total attempts, with 100 ms
+and 200 ms delays. Each attempt retains the configured request deadline. Reverted
+calls, invalid responses and permanent errors are returned immediately. Oversized
+read batches split recursively down to individual requests. Unknown methods and
+submission methods are never retried; an ambiguous transport/server failure is
+reported as `RpcSubmissionOutcomeUnknown`, which requires checking transaction
+state before another submission. `Rpc.requests` counts successful logical reads;
+`Rpc.wire_attempts` counts HTTP attempts including retries and splits.
+
+Transaction `confirmations` count canonical blocks including the receipt block.
+On Arbitrum, reports label this `confirmationBasis: "l2-block-depth"`.
+`status: "confirmed"` means a successful receipt reached the requested depth;
+it does not assert parent-chain finality or settlement. Add `--finality` to
+`transactions track`, `refresh`, or `wait` to inspect the RPC's `safe` and
+`finalized` tags after the observation. Each marker reports `reached`,
+`not-reached`, or `unavailable`, with its canonical block or error. Without the
+option both are `not-checked`. A replacement's marker applies to its receipt,
+identified by `finalityTransactionHash`. `wait` still waits for block depth only.
+Settlement is separately `not-checked`; no L1 rollup assertion or withdrawal
+verification is performed. See [Arbitrum's finality reference](https://developer.arbitrum.io/how-arbitrum-works/reference/finality-and-reorgs).
+
+Before an EOA broadcast, the CLI resolves the actual wallet address, freezes the
+explicit or pending nonce, and records both with the chain ID and canonical
+`submissionBlock` in the recovery intent. Foundry receives that exact sender and
+nonce. The intent is durable before the subprocess starts; the returned hash is
+saved before receipt polling. This supports recovery even if the transaction
+later disappears from the RPC mempool. Concurrent use of the same signer can
+still compete for the same nonce. ERC-4337 nonces remain bundler-managed and are
+separate from EOA transaction nonces.
+
+For standalone terms checking, supply all three inputs:
+
+```sh
+chainwall terms document IPFS_URI SHA256_DIGEST --document-file terms.md --offline
+```
+
+This requires no RPC endpoint, Registry, wallet, or Foundry. The explicit URI/hash
+and local file also select offline verification without `--offline`; the flag
+requires all inputs and prevents an accidental online lookup. The result verifies
+exact bytes and UTF-8, reports `publicationStatus: "not-checked"`, and does not
+establish that the document is published or accepted onchain.
+
+Recover a proposal after an interrupted `operations propose`:
+
+```sh
+chainwall operations reconcile prepared.json --proposal-tx 0xTRANSACTION_HASH
+```
+
+Use the confirmed transaction hash from the submission journal or explorer.
+If the file already contains a mined receipt or `proposalTxHash`, omit the flag.
+The command verifies the direct Interact proposal transaction and canonical
+receipt, fills `operationId` and `createdAt`, and atomically finalizes the input.
+Rerunning is idempotent. `--dry-run` previews recovery; `--out recovered.json`
+keeps the input and writes a separate result (an identical result may be reused).
+It does not sign or resubmit, and historical recovery still works after an
+operation closes. Wrapped/multicall/UserOperation transactions whose top-level
+calldata is not `propose` are rejected; recover their underlying proposal context
+before using this direct-transaction workflow.
+
+Cached Registry lists, operation lists, recipient views, and transaction history
+include a versioned `cache` object. Search, sync reports, and LSP catalog status
+use `cacheByDataset` when several checkpoints are involved. Existing output fields
+remain available.
+
+| Field | Meaning |
+| --- | --- |
+| `formatVersion` | Metadata schema version, currently 1. |
+| `source` | Origin such as `sqlite-cache`, `local-imports`, `journal-and-local-imports`, `transaction-journal`, or `snapshot-file`. |
+| `checkpoint` | Original snapshot checkpoint, or explicit `null`. |
+| `freshness` | `as-of-block` or `unknown`, with `asOfBlock`, `headChecked: false`, and unknown `ageSeconds: null`. Reading a cache does not establish current freshness. |
+| `statusBlock` | Block used for a separately verified execution/authorization status, or `null`. This may differ from the discovery checkpoint and its chain. |
+| `completeness` | Separate `snapshot` and `history` states (`complete`, `partial`, `unknown`), plus nullable verified range and indexer-through fields. |
+
+Completeness describes the configured dataset and available secret history, not
+all activity on the chain. Invalid or unreadable journal records make the decoded
+snapshot partial. An indexed current-state snapshot does not prove historical
+coverage. Explorer-only discovery does not establish complete history. Local
+imports have no chain-discovery checkpoint; missing evidence remains unknown.
+Raw ABI-array exports retain their ABI format; LSP catalog status exposes their
+availability/errors alongside this metadata.

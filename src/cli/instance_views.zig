@@ -8,6 +8,16 @@ const rpc = @import("rpc.zig");
 const Cast = @import("cast.zig").Cast;
 const Args = @import("args.zig").Args;
 
+fn incompatibleIntrospection(a: c.A, err: anyerror, detail: ?c.Value) !bool {
+    if (err == error.InvalidAbiResponse) return true;
+    if (err != error.RpcRejectedRequest) return false;
+    const failure = detail orelse return false;
+    if ((c.number(a, c.field(failure, "code") orelse .null) catch 0) == 3) return true;
+    const message = c.string(c.field(failure, "message") orelse .null) catch return false;
+    const lower = try std.ascii.allocLowerString(a, message);
+    return std.mem.indexOf(u8, lower, "execution reverted") != null or std.mem.startsWith(u8, lower, "revert");
+}
+
 fn inspect(cast: *Cast, cat: contracts.Catalog, dir: []const u8, profile_name: []const u8, chain: u64, endpoint: []const u8, registry: []const u8, summary: bool) !c.Value {
     const a = cast.a;
     try @import("rpc_pool.zig").validateSelection(a, cast.io, dir, profile_name, chain, endpoint);
@@ -16,25 +26,29 @@ fn inspect(cast: *Cast, cat: contracts.Catalog, dir: []const u8, profile_name: [
     try remote.pinBlock(cast.block, 0);
     const code = try c.string(try remote.one("eth_getCode", try abi.array(a, &.{ .{ .string = registry }, try remote.blockSelector() })));
     var status: []const u8 = "not-installed";
+    var introspection_error: ?[]const u8 = null;
     if (code.len > 2) {
-        const identity = try remote.namedAt(registry, try cat.find("registry", "chainwallComponentId"), &.{});
-        status = if (try c.number(a, identity) == ms.bytecode.hash("Chainwall.Registry")) "installed" else "different-contract";
+        const identity = remote.namedAt(registry, try cat.find("registry", "chainwallComponentId"), &.{}) catch |err| blk: {
+            if (!try incompatibleIntrospection(a, err, remote.last_error)) return err;
+            introspection_error = @errorName(err);
+            break :blk c.Value.null;
+        };
+        status = if (identity != .null and try c.number(a, identity) == ms.bytecode.hash("Chainwall.Registry")) "installed" else "different-contract";
     }
-    var report = try c.parse(a, try c.encode(a, .{ .chainId = chain, .registry = registry, .status = status, .block = remote.block }));
+    var report = try c.parse(a, try c.encode(a, .{ .chainId = chain, .registry = registry, .status = status, .block = remote.block, .introspectionError = introspection_error }));
     if (summary and c.eq(u8, status, "installed")) {
         var fields: std.json.ObjectMap = .empty;
         var errors: std.json.ObjectMap = .empty;
         // Older installations may omit facets. Preserve unavailable fields as
         // null with their errors, never as successful empty/false results.
-        for ([_][2][]const u8{
+        const pairs = [_][2][]const u8{
             .{ "paused", "paused" }, .{ "owner", "owner" }, .{ "ownerBootstrapFinalized", "bootstrapFinalized" }, .{ "getSecurityCouncilConfiguration", "securityCouncil" }, .{ "getTermsContext", "terms" }, .{ "instanceHasAcceptedInitialTerms", "acceptance" }, .{ "getPendingActionCount", "pendingActions" }, .{ "getUserCount", "users" }, .{ "getAccountCount", "accounts" }, .{ "getSafeCount", "safes" }, .{ "getPolicyCount", "policies" }, .{ "getInteractionCount", "interactions" }, .{ "getTokenCount", "tokens" },
-        }) |pair| {
-            const value = remote.namedAt(registry, try cat.find("registry", pair[0]), &.{}) catch |err| blk: {
-                if (err == error.OutOfMemory) return err;
-                try errors.put(a, pair[1], .{ .string = @errorName(err) });
-                break :blk c.Value.null;
-            };
-            try fields.put(a, pair[1], value);
+        };
+        var reads: [pairs.len]@import("metadata_batch.zig").Read = undefined;
+        for (pairs, &reads) |pair, *item| item.* = .{ .address = registry, .method = try cat.find("registry", pair[0]) };
+        for (pairs, try @import("metadata_batch.zig").read(&remote, &reads)) |pair, result| {
+            if (result.err != null) try errors.put(a, pair[1], try result.detail(a));
+            try fields.put(a, pair[1], result.value);
         }
         try report.object.put(a, "summary", .{ .object = fields });
         try report.object.put(a, "errors", .{ .object = errors });
@@ -85,4 +99,43 @@ pub fn run(cast: *Cast, cat: contracts.Catalog, profile: config.Profile, dir: []
     const result = try c.parse(a, try c.encode(a, .{ .chains = reports.items, .installed = installed, .unavailable = unavailable }));
     if (out) |path| try c.write(cast.io, path, try c.encode(a, result), false);
     return result;
+}
+
+test "discovery distinguishes unsupported introspection from provider failure" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    const cat = try contracts.Catalog.load(a);
+    const mock = @import("test_rpc.zig");
+    const block = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"number\":\"0x1\",\"hash\":\"0x1111111111111111111111111111111111111111111111111111111111111111\",\"timestamp\":\"0x1\"}}]";
+    const replies = [_][]const u8{
+        "[{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":3,\"message\":\"execution reverted\"}}]",
+        "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x\"}]",
+        "[{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32005,\"message\":\"rate limit exceeded\"}}]",
+    };
+    for (replies, 0..) |reply, i| {
+        const responses = [_]mock.Reply{
+            .{ .body = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xa4b1\"}]" },
+            .{ .body = block },
+            .{ .body = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x6000\"}]" },
+            .{ .body = reply },
+            .{ .body = if (i == 2) reply else block },
+            .{ .body = reply },
+        };
+        var server = try mock.Server.init(std.testing.io, responses[0..(if (i == 2) @as(usize, 6) else 5)]);
+        defer server.deinit();
+        var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+        defer _ = serving.cancel(std.testing.io) catch {};
+        var cast: Cast = .{ .a = a, .io = std.testing.io, .env = &env, .chain = 42161, .instance = "0x2222222222222222222222222222222222222222", .rpc = try server.url(a) };
+        var args = try Args.parse(a, &.{});
+        const report = try run(&cast, cat, .{}, dir, "default", &args, &.{ "instances", "discover" });
+        try serving.await(std.testing.io);
+        const result = c.field(report, "chains").?.array.items[0];
+        try std.testing.expectEqualStrings(if (i == 2) "unavailable" else "different-contract", try c.string(c.field(result, "status").?));
+    }
 }

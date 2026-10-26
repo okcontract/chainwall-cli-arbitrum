@@ -123,7 +123,7 @@ pub fn validateFile(v: *json.Validator, io: std.Io, binding: Binding) !void {
     const trimmed = c.trim(bytes);
     if (binding.mixed and c.eq(u8, binding.name, "program-document") and !std.mem.startsWith(u8, trimmed, "{")) return;
     const value = c.parse(v.a, bytes) catch {
-        try std.Io.File.stderr().writeStreamingAll(io, try v.a.print("Invalid JSON syntax ({s}); input values omitted.\n", .{binding.name}));
+        if (!v.quiet) try std.Io.File.stderr().writeStreamingAll(io, try v.a.print("Invalid JSON syntax ({s}); input values omitted.\n", .{binding.name}));
         return error.InvalidJsonInput;
     };
     try v.require(io, binding.rule, value, binding.name);

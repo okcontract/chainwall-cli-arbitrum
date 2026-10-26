@@ -12,10 +12,15 @@ pub fn key(a: c.A, scope: []const u8, chain: u64, registry: []const u8) ![]const
 /// usable only through an explicit profile Registry binding and its own cache.
 pub fn load(a: c.A, v: Vault, scope: []const u8, profile: config.Profile, selected_chain: u64, selected_registry: []const u8, chain: u64) !c.Value {
     const registry = if (chain == selected_chain) selected_registry else profile.forChain("instances.", chain) orelse return .null;
-    const bytes = (try v.get(try key(a, scope, chain, registry))) orelse return .null;
+    const context = try key(a, scope, chain, registry);
+    const bytes = (try v.get(context)) orelse return .null;
     defer std.crypto.secureZero(u8, bytes);
     var snapshot = try c.parse(a, bytes);
     if (snapshot != .object) return error.InvalidVault;
+    if (c.field(snapshot, "formatVersion")) |version| {
+        if (try c.number(a, version) != 2) return error.InvalidVault;
+        try snapshot.object.put(a, "values", try @import("sealed_records.zig").load(v, context));
+    }
     try snapshot.object.put(a, "registry", .{ .string = registry });
     return snapshot;
 }
@@ -42,4 +47,10 @@ test "cross-chain operation snapshots require explicit tenant and KV context" {
     try std.testing.expectEqual(c.Value.null, try load(a, v, "kv-a", profile, 1, other, 8453));
     // The selected chain uses the explicit command target, never a stale profile.
     try std.testing.expect((try load(a, v, "kv-a", profile, 8453, registry, 8453)) != .null);
+    const context = try key(a, "kv-a", 8453, registry);
+    try v.put(context, "{\"formatVersion\":2,\"block\":{\"number\":124}}");
+    try @import("sealed_records.zig").put(v, context, "new-id", .{ .string = "closed" });
+    const paged = try load(a, v, "kv-a", profile, 8453, registry, 8453);
+    try std.testing.expectEqualStrings("closed", try c.string(c.field(c.field(paged, "values").?, "new-id").?));
+    try std.testing.expect(c.field(c.field(paged, "values").?, "id") == null);
 }

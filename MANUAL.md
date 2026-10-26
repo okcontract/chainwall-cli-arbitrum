@@ -152,7 +152,7 @@ Before connecting, obtain these details from your instance administrator:
 - For encrypted operations: the KV chain, KV address, current shared secret, and
   Interact address for each execution chain.
 
-An Etherscan API token is needed when fetching verified ABIs and when syncing event
+An Etherscan API token is needed when fetching verified ABIs and when selecting explorer event
 history from contracts whose optional indexing is disabled.
 
 ## 3. Connect to your first instance
@@ -503,7 +503,8 @@ Supported chain names:
 | `base-sepolia` | 84532 |
 | `anvil`, `localhost` | 31337 |
 
-Other chains use a positive numeric chain ID. Configure an RPC URL for each chain,
+Other chains use a numeric chain ID from 1 through 9,007,199,254,740,991, matching
+the exact JSON integer range used by configuration export. Configure an RPC URL for each chain,
 and check Etherscan coverage and your API plan before using explorer commands.
 
 ## 5. Signers, passwords, and transactions
@@ -697,6 +698,11 @@ chainwall transactions speed-up "$TX_HASH" --bump 15
 chainwall transactions cancel "$TX_HASH"
 ```
 
+Speed-ups and cancellations estimate the replacement payload on the selected
+chain and add a 20% gas margin. Explicit `--gas-limit` values must cover the
+estimate; speed-ups also retain at least the original gas limit.
+
+
 The list is a local snapshot for the selected chain. `track HASH` adds or updates
 an observation. `refresh [HASH]` refreshes one hash or a page of tracked entries;
 `--start` and `--count` select pages of at most 100. `wait` polls for canonical
@@ -704,8 +710,19 @@ receipts, defaults to 120 seconds, and accepts `--poll-interval 1..60` (default 
 `--timeout 0` checks once. These commands never resubmit transactions. `--out FILE`
 reserves a new report file with private permissions.
 
-A consumed nonce triggers a bounded search for its replacement in the last 64
-blocks. Use `--lookback 0..1024` to change the search window. Matching sender,
+`confirmed` means a successful canonical receipt reached the requested block
+depth. On Arbitrum these are L2 blocks, as `confirmationBasis` states. Add
+`--finality` to track, refresh or wait for separate RPC `safe` and `finalized`
+observations. Unsupported tags remain `unavailable`; omitted checks remain
+`not-checked`. This option reports markers after depth tracking and does not
+change the wait condition. Settlement remains `not-checked`: neither block
+depth nor these RPC markers prove rollup assertion or withdrawal settlement.
+
+A consumed nonce triggers a search starting at the saved submission block, or
+the last 64 blocks when submission context is unavailable. `--lookback 0..1024`
+bounds blocks examined per observation; zero disables scanning. Blocks are fetched
+in batches of 16. Persisted `replacementSearch` progress resumes on the next
+observation after validating its canonical anchor, and resets after a reorg. Matching sender,
 nonce, destination, calldata, value and access list establish `repriced`.
 An empty self-transfer is `cancelled`; other payloads are `replaced`. A consumed
 nonce without a discovered replacement is `nonce-used`, not proof of execution.
@@ -742,8 +759,11 @@ it, the configured wallet may need unlocking just to obtain its address.
 `{chainId,to,data,value,from?,nonce?}`. Omit `to` for contract creation. It rejects
 mismatched chains and senders and preserves supplied access lists.
 
+Use `--estimate` with commands that prepare a transaction. Local configuration,
+profile-management, and list commands reject it before changing state.
+
 The report gives the canonical block, estimated gas, gas limit, fee model,
-estimated execution fee, maximum execution fee, native value and sender balance.
+estimated transaction fee, maximum transaction fee, native value and sender balance.
 The default gas limit adds 20% to the estimate. EIP-1559 defaults use twice the
 block base fee plus the RPC priority suggestion. `--gas-limit N`, `--max-fee`,
 and `--priority-fee` override those values. `--gas-price` selects legacy pricing;
@@ -751,8 +771,12 @@ and `--priority-fee` override those values. `--gas-price` selects legacy pricing
 exact wei or gwei, without floating-point rounding. The same options apply to
 Foundry submissions; pass reviewed limits again when sending.
 
-Estimates cover execution gas only. They exclude rollup L1 data charges and
-other chain-specific charges. Multi-stage deployments estimate the displayed
+On Arbitrum, `estimatedTransactionFeeWei` includes both L2 execution and L1 data
+posting, as included by `eth_estimateGas`. Do not add the L1 component again.
+`maximumTransactionFeeWei` applies the chosen gas limit and maximum gas price;
+`maximumValueAndFeeWei` also includes transferred native value. Estimates vary
+with chain state and are not a guarantee of the final fee. On other chains, the
+scope is the gas estimate supplied by that chain's RPC. Multi-stage deployments estimate the displayed
 stage; later stages require their prerequisites mined first. Requests that require
 actor or Safe signatures need those signatures present to pass estimation.
 Passkey and UserOperation fee review remains in the browser approval flow, where
@@ -1707,6 +1731,8 @@ chainwall commitments list
 chainwall commitments commit "$COMMIT_HASH"
 chainwall commitments status "$COMMIT_HASH"
 chainwall commitments reveal "$COMMIT_HASH"
+chainwall commitments archive "$COMMIT_HASH"
+chainwall commitments archives
 ```
 
 Use `token` or `interaction` in place of `contract` for those templates and
@@ -1719,6 +1745,12 @@ Preparation generates a secret random salt and saves the complete draft in the
 encrypted local vault, scoped to chain and Registry. It needs no KV deployment.
 Use `--passphrase-file FILE` for automation. Normal reports never disclose the
 salt or payload. Public salt phrases are not accepted for private commitments.
+
+The active collection holds at most 1,024 drafts. `commitments archive HASH`
+checks live state and moves an absent or expired commitment with no pending
+action into encrypted local history. `commitments archives` lists that history.
+`export HASH --out FILE` works for active and archived drafts; import the export
+to restore a draft to the active collection. Archival never submits a transaction.
 
 Deadlines default to seven days and cannot exceed 90 days. Submission checks
 chain time, matching commitment state, pending actions and timelock delay.
@@ -2432,7 +2464,7 @@ flag. That flag changes the strategy for timelock discovery:
 | Registry indexing | Timelock discovery |
 | --- | --- |
 | Enabled | Read pending summaries and newly executed summaries directly from onchain indexes; refresh previously observed actions that leave the pending queue. |
-| Disabled | Use Etherscan V2 queue-event logs to discover action IDs, then read their current summaries through RPC. |
+| Disabled | Use RPC or Etherscan V2 queue-event logs to discover action IDs, then read their current summaries through RPC. |
 
 ```sh
 chainwall registry indexingEnabled
@@ -2476,11 +2508,18 @@ The CLI checks the old checkpoint for reorganization, resets affected snapshots 
 necessary, and checks the new block before committing.
 If the chain changes during the sync, retry from the preserved checkpoint.
 
+Network reads and decoding use a private disk snapshot so they do not hold the live
+database's write lock. Publication checks the source revision, then atomically applies
+changed rows and checkpoints. Concurrent writers remain usable; if one changes the
+database, `DatabaseChangedRetrySync` preserves its work and asks for a fresh sync.
+The same staging applies to recipient refresh, checkpoint preparation and LSP metadata.
+
 ### Explorer ranges and full refreshes
 
 ```sh
 chainwall sync --only timelocks --from-block "$REGISTRY_DEPLOYMENT_BLOCK"
 chainwall sync --only timelocks --lookback 512
+chainwall sync --only timelocks --log-source rpc
 chainwall sync --only timelocks --full
 ```
 
@@ -2493,9 +2532,17 @@ maintain.
 
 Explorer scans revisit the last 128 blocks by default to catch delayed logs.
 `--lookback` changes that overlap; zero resumes after the previous checkpoint without
-overlap. If indexing lag exceeds the overlap, use a larger value or a full rescan of the
-intended range. Immutable KV values already cached are not downloaded again just because
+overlap. If indexing lag exceeds the overlap, use `--backfill-from N` to revisit
+older logs without clearing cached records, or a full rescan of the intended range.
+Use `--log-source rpc` for a backfill independent of explorer indexing lag.
+Immutable KV values already cached are not downloaded again just because
 their logs fall inside the overlap.
+
+Checkpoint `block` describes the state snapshot. Its separate `discovery` record
+reports the actual log source, requested range and verified contiguous coverage.
+`historyComplete` refers to coverage from the configured `--from-block` through
+the snapshot. Explorer responses cannot establish it: `indexerCompleteThrough`
+remains null. Sync output includes these checkpoints for each completed dataset.
 
 The explorer reader paginates, subdivides oversized ranges, retries rate limits within a
 bounded allowance, and checks log block hashes against RPC. Provider errors are errors,
@@ -2805,7 +2852,7 @@ Without a configured Interact, journal proposals can still be listed, but their
 execution status is `unknown`.
 
 Indexed KV sync reads new keys for each readable password signer.
-A KV with indexing disabled uses Etherscan write-event logs instead.
+A KV with indexing disabled uses RPC or Etherscan write-event logs instead.
 Previously cached immutable values are reused.
 Only supported operation journals are decoded; unrelated KV values are ignored, and
 matching records with invalid or unreadable contents are counted.
@@ -2826,19 +2873,28 @@ Lists normally show proposals for the selected execution chain.
 `--all-chains` includes readable proposals for other execution chains in the same
 journal.
 
-Listings are always local snapshots and require a prior successful operations sync.
-`--offline` makes the cached read explicit; run `sync --only operations` to refresh it.
-Run sync first to update the journal or status observations.
+Listings read local snapshots. Journal-backed lists require a prior operations
+sync; `--offline` makes the cached read explicit and `sync --only operations`
+refreshes the journal and status observations. Operational lists merge local
+imports with journal entries before deduplication, sorting, and pagination.
+`--local`, or a profile without `kv_address`, lists encrypted local imports
+without a journal sync. This mode reports execution status as `unknown` and
+requires a single selected execution chain.
+
+`--view audit` lists raw journal entries, including duplicates, and excludes local
+imports. It requires configured journal storage and rejects `--local`.
 
 ### Read an entry
 
-Output contains `entries`, `total`, `checkpoint`, `statusBlock`, `unreadable`, and
-`invalid`. `total` is the count after chain, Safe, and status filtering, before
-pagination. Proposals are deduplicated by pending identity and ordered with newer
-creation times first.
+All list modes include `entries` and `total`. Journal-backed output also includes
+`checkpoint`, `statusBlock`, `unreadable`, and `invalid`; local-only output has
+`source: "local-imports"` and a null `statusBlock`. `total` is the count after
+chain, Safe, and status filtering, before pagination. Operational proposals are
+deduplicated by pending identity and ordered with newer creation times first.
 
-Each entry includes a pending ID, journal key, encryption-signer address, status, and a
-`payload`. Useful payload fields include:
+Each entry includes a pending ID, status, and a `payload`. Journal entries also
+include a journal key and encryption-signer address. Imported entries instead
+include `source: "local-import"` and `proposalTxHash`. Useful payload fields include:
 
 | Field | Meaning |
 | --- | --- |
@@ -2877,13 +2933,17 @@ They can refer to different chains and times.
 Offline statuses reflect the saved check. Sync again to evaluate expiry against a
 newer block timestamp.
 
-For `--all-chains`, entries on other execution chains have `unknown` status in that
-invocation. Select and sync each chain’s profile to inspect its verified statuses.
+For `--all-chains`, another chain's status is used only when the profile explicitly
+maps that chain's Registry in `[instances]` and a verified status snapshot exists
+for that Registry and the same KV scope. Configure `[interacts]` and sync operations
+on each execution chain to populate its observations. Missing mappings or snapshots
+produce `unknown`. Per-entry `statusRegistry` and `statusBlock` identify the context;
+the top-level `statusBlock` describes the currently selected execution chain.
 
 The unreadable and invalid counts describe journal records encountered during decoding,
 not necessarily just the page or filtered Safe you requested.
-The list covers readable, supported proposals published to the configured journal.
-Use the execution client's records to inspect operations kept elsewhere.
+The operational list also includes local imports for the selected chain and Registry.
+Audit view covers only readable, supported proposals in the configured journal.
 
 ### Create and publish a proposal
 
@@ -3431,7 +3491,7 @@ chainwall artifacts RegistryInteractionsFacet > interactions-artifact.json
 | Interactive terminal required | Supply `--passphrase-file` for automation or unsupported terminal platforms. |
 | KV RPC URL required | Configure `kv_rpc_url` or the matching `[rpc]` entry for the storage chain. |
 | Interact/Registry mismatch | Set `interact` or `[interacts]` to the execution component bound to the selected Registry. |
-| Every proposal is `unknown` | Check Interact configuration, then sync operations on the selected execution chain. Other-chain rows under `--all-chains` remain unknown in that listing. |
+| Every proposal is `unknown` | Local-only listings have no verified execution status. For journal listings, check Registry/Interact mappings and sync each execution chain; other-chain rows require an explicit Registry mapping and a matching saved status snapshot. |
 | Proposal is `closed` but no execution is known | The predicate includes withdrawn or missing records. Check execution transaction/event evidence separately. |
 | Unreadable/invalid journal count is nonzero | Check current secret, rotation history, compatible journal format, and the intended storage address. |
 | Factory transaction may have succeeded but setup failed | Keep the encrypted pending secret in the database and inspect the receipt/deployment before retrying creation. |
@@ -3628,3 +3688,33 @@ Use each option with the task described in the table. Check the specific command
 | Storage chain | Chain hosting the encrypted journal’s KV contract. |
 | Timelock | Governance mechanism separating a queued action from its later execution. |
 | Wei | Smallest integer unit used for native EVM currency values. |
+
+Event discovery supports `sync --log-source auto|rpc|explorer`. The default
+`auto` uses a configured explorer, falling back to RPC when it is unavailable;
+without an explorer API key it uses RPC directly. Explicit `rpc` requires no API
+key. Ranges are bounded and split when the provider rejects their size. A
+single-block overflow fails without replacing the snapshot. Both backends verify
+log block hashes against the selected RPC; the checkpoint records the source used.
+
+Standalone terms verification is available with
+`chainwall terms document IPFS_URI SHA256_DIGEST --document-file FILE --offline`.
+With all three inputs, the command performs no network reads and reports
+`publicationStatus: "not-checked"`. It checks the exact local bytes against the
+caller-supplied SHA-256 digest, including their line endings; acceptance and
+publication checks remain separate online operations.
+
+To finish a prepared or mined proposal file after interruption, run
+`chainwall operations reconcile FILE --proposal-tx HASH`. The hash can be omitted
+when the file already contains the receipt or proposal hash. Reconciliation reads
+canonical transaction evidence and restores the final operation ID and creation
+timestamp without signing or broadcasting. The default atomically updates FILE;
+`--out NEW_FILE` writes separately and `--dry-run` only previews. Repeating the
+same reconciliation produces the same proposal bytes. Direct `propose`
+transactions are supported; wrapped transaction envelopes are rejected.
+
+Cached views expose the common `cache` / `cacheByDataset` metadata described in
+[CLI.md](CLI.md). Its `source`, `checkpoint`, `freshness`, `statusBlock`, and
+`completeness` fields distinguish discovery from separately checked status.
+Offline reads retain the snapshot's block and never claim current head freshness.
+Unknown checkpoints, status blocks and verified coverage bounds are explicit
+`null` values. Existing command-specific checkpoint fields remain compatible.

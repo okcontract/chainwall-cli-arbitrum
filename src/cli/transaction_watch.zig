@@ -20,7 +20,10 @@ pub fn list(db: Store, chain: u64) ![]c.Value {
     return (try db.entries(try scope(db.a, chain), "transactions")).values();
 }
 pub fn saved(db: Store, chain: u64, tx_hash: []const u8) !?c.Value {
-    return (try db.entries(try scope(db.a, chain), "transactions")).get(tx_hash);
+    return db.get(try scope(db.a, chain), "transactions", tx_hash);
+}
+pub fn page(db: Store, chain: u64, start: u64, count: u64) !Store.Page {
+    return db.page(try scope(db.a, chain), "transactions", start, count);
 }
 pub fn save(db: Store, chain: u64, report: c.Value) !void {
     try db.put(try scope(db.a, chain), "transactions", try hash(db.a, try string(report, "hash")), try redact(db.a, report));
@@ -124,33 +127,86 @@ pub fn replacementKind(a: c.A, original: c.Value, next: c.Value) ![]const u8 {
     if (simple and sameTarget(to, try field(next, "from")) and c.eq(u8, try string(next, "input"), "0x") and try c.number(a, try field(next, "value")) == 0 and try sameAccess(c.field(next, "accessList") orelse .null, .null)) return "cancelled";
     return "replaced";
 }
-fn replacement(remote: *rpc.Rpc, original: c.Value, lookback: u64) !c.Value {
+const Search = struct { replacement: c.Value = .null, progress: c.Value = .null };
+fn originalFromIntent(a: c.A, tx_hash: []const u8, previous: ?c.Value) !c.Value {
+    const record = previous orelse return .null;
+    const intent = c.field(record, "intent") orelse return .null;
+    const from = c.field(intent, "from") orelse return .null;
+    const nonce = c.field(intent, "nonce") orelse return .null;
+    if (from == .null or nonce == .null) return .null;
+    return c.parse(a, try c.encode(a, .{ .hash = tx_hash, .from = from, .nonce = nonce, .chainId = try field(intent, "chainId"), .to = c.field(intent, "to") orelse .null, .value = try abi.uint(a, try @import("amounts.zig").native(try c.scalar(a, try field(intent, "value")))), .inputHash = try field(intent, "dataHash"), .inputBytes = c.field(intent, "dataBytes") orelse .null, .accessList = c.field(intent, "accessList") orelse .null }));
+}
+fn replacementReport(remote: *rpc.Rpc, original: c.Value, tx: c.Value, receipt: c.Value, tx_hash: []const u8) !c.Value {
+    const confirmations = try canonicalReceipt(remote, tx, receipt, tx_hash);
+    if (same(tx_hash, try string(original, "hash"))) return error.NotATransactionReplacement;
+    return c.parse(remote.a, try c.encode(remote.a, .{ .kind = try replacementKind(remote.a, original, tx), .hash = tx_hash, .transaction = tx, .receipt = receipt, .confirmations = confirmations }));
+}
+fn replacement(remote: *rpc.Rpc, original: c.Value, previous: ?c.Value, budget: u64) !Search {
     const a = remote.a;
+    // A discovered hash is a durable lookup key, not a terminal cached result.
+    // Re-read its receipt against this observation's pinned chain snapshot.
+    var restart = false;
+    if (previous) |record| if (c.field(record, "replacement")) |known| if (c.field(known, "hash")) |value| {
+        const known_hash = try hash(a, try c.string(value));
+        const params = try abi.array(a, &.{.{ .string = known_hash }});
+        const values = try remote.batch(&.{ .{ .method = "eth_getTransactionByHash", .params = params }, .{ .method = "eth_getTransactionReceipt", .params = params } });
+        if (values[0] != .null and values[1] != .null) {
+            const report = replacementReport(remote, original, values[0], values[1], known_hash) catch |err| switch (err) {
+                error.TransactionReorganized => @as(c.Value, .null),
+                else => return err,
+            };
+            if (report != .null) return .{ .replacement = report };
+        }
+        // Missing/noncanonical replacements invalidate earlier scan coverage.
+        restart = true;
+    };
     const from = try string(original, "from");
     const nonce = try c.number(a, try field(original, "nonce"));
     const current = try c.number(a, try remote.one("eth_getTransactionCount", try abi.array(a, &.{ .{ .string = from }, try remote.blockSelector() })));
-    if (current <= nonce) return .null;
-    const stop = remote.block.number -| (lookback -| 1);
-    var height = remote.block.number;
-    while (lookback != 0 and height >= stop) : (height -= 1) {
-        const block = try remote.one("eth_getBlockByNumber", try abi.array(a, &.{ .{ .string = try rpc.quantity(a, height) }, .{ .bool = true } }));
-        if (try rpc.integer(a, try field(block, "number")) != height) return error.InvalidRpcBlock;
-        const transactions = try field(block, "transactions");
-        if (transactions != .array or transactions.array.items.len > 100000) return error.InvalidRpcBlock;
-        for (transactions.array.items) |tx| {
-            if (!same(try string(tx, "from"), from) or try c.number(a, try field(tx, "nonce")) != nonce) continue;
-            const tx_hash = try string(tx, "hash");
-            try validateTransaction(a, tx, tx_hash, remote.chain);
-            if (same(tx_hash, try string(original, "hash"))) return .null;
-            const receipt = try remote.one("eth_getTransactionReceipt", try abi.array(a, &.{.{ .string = tx_hash }}));
-            if (receipt == .null) return .null;
-            const confirmations = try canonicalReceipt(remote, tx, receipt, tx_hash);
-            if (try rpc.integer(a, try field(receipt, "blockNumber")) != height or !same(try string(block, "hash"), try string(receipt, "blockHash"))) return error.TransactionReorganized;
-            return c.parse(a, try c.encode(a, .{ .kind = try replacementKind(a, original, tx), .hash = tx_hash, .transaction = tx, .receipt = receipt, .confirmations = confirmations }));
+    if (current <= nonce) return .{};
+    var floor = remote.block.number -| (budget -| 1);
+    if (previous) |record| if (c.field(record, "intent")) |intent| if (c.field(intent, "submissionBlock")) |submitted_block| {
+        floor = @min(remote.block.number, try rpc.integer(a, try field(submitted_block, "number")));
+    };
+    var next = floor;
+    if (!restart) if (previous) |record| if (c.field(record, "replacementSearch")) |progress| if (progress == .object) {
+        const anchor = try field(progress, "anchor");
+        const old_height = try rpc.integer(a, try field(anchor, "number"));
+        if (old_height <= remote.block.number and try remote.canonical(.{ .number = old_height, .hash = try string(anchor, "hash"), .timestamp = 0 })) {
+            const old_floor = try rpc.integer(a, try field(progress, "fromBlock"));
+            const old_next = try rpc.integer(a, try field(progress, "nextBlock"));
+            if (old_floor <= floor and old_next >= old_floor and old_next <= remote.block.number +| 1) {
+                floor = old_floor;
+                next = old_next;
+            }
         }
-        if (height == 0) break;
+    };
+    var remaining = budget;
+    while (remaining > 0 and next <= remote.block.number) {
+        const count: usize = @intCast(@min(16, @min(remaining, remote.block.number - next + 1)));
+        var requests: [16]rpc.Request = undefined;
+        for (requests[0..count], 0..) |*request, i| request.* = .{ .method = "eth_getBlockByNumber", .params = try abi.array(a, &.{ .{ .string = try rpc.quantity(a, next + i) }, .{ .bool = true } }) };
+        const blocks = try remote.batch(requests[0..count]);
+        for (blocks) |block| {
+            const height = next;
+            if (try rpc.integer(a, try field(block, "number")) != height) return error.InvalidRpcBlock;
+            const transactions = try field(block, "transactions");
+            if (transactions != .array or transactions.array.items.len > 100000) return error.InvalidRpcBlock;
+            for (transactions.array.items) |tx| {
+                if (!same(try string(tx, "from"), from) or try c.number(a, try field(tx, "nonce")) != nonce) continue;
+                const tx_hash = try string(tx, "hash");
+                try validateTransaction(a, tx, tx_hash, remote.chain);
+                if (same(tx_hash, try string(original, "hash"))) return .{};
+                const receipt = try remote.one("eth_getTransactionReceipt", try abi.array(a, &.{.{ .string = tx_hash }}));
+                if (receipt == .null) return .{};
+                if (try rpc.integer(a, try field(receipt, "blockNumber")) != height or !same(try string(block, "hash"), try string(receipt, "blockHash"))) return error.TransactionReorganized;
+                return .{ .replacement = try replacementReport(remote, original, tx, receipt, tx_hash) };
+            }
+            next += 1;
+        }
+        remaining -= count;
     }
-    return c.parse(a, "{\"kind\":\"nonce-used\"}");
+    return .{ .replacement = try c.parse(a, "{\"kind\":\"nonce-used\"}"), .progress = try c.parse(a, try c.encode(a, .{ .fromBlock = floor, .nextBlock = next, .anchor = remote.block, .complete = next > remote.block.number, .blocksScanned = budget - remaining })) };
 }
 pub fn observe(remote: *rpc.Rpc, tx_hash: []const u8, previous: ?c.Value, confirmations: u64, lookback: u64) !c.Value {
     if (confirmations == 0 or lookback > 1024) return error.InvalidTransactionMonitorOptions;
@@ -160,18 +216,22 @@ pub fn observe(remote: *rpc.Rpc, tx_hash: []const u8, previous: ?c.Value, confir
     const params = try abi.array(a, &.{.{ .string = canonical_hash }});
     const values = try remote.batch(&.{ .{ .method = "eth_getTransactionByHash", .params = params }, .{ .method = "eth_getTransactionReceipt", .params = params } });
     const live_tx = values[0];
-    const tx = if (live_tx != .null) live_tx else if (previous) |record| c.field(record, "transaction") orelse c.Value.null else c.Value.null;
+    const cached_tx = if (previous) |record| c.field(record, "transaction") orelse c.Value.null else c.Value.null;
+    const tx = if (live_tx != .null) live_tx else if (cached_tx != .null) cached_tx else try originalFromIntent(a, canonical_hash, previous);
     if (tx != .null) try validateTransaction(a, tx, tx_hash, remote.chain);
     if (previous) |record| if (c.field(record, "intent")) |intent| if (live_tx != .null) try bindIntent(a, intent, live_tx);
     var status: []const u8 = if (live_tx == .null) "unknown" else "pending";
     var depth: u64 = 0;
     var replaced: c.Value = .null;
+    var search: c.Value = .null;
     if (values[1] != .null) {
         if (live_tx == .null) return error.TransactionDetailsUnavailable;
         depth = try canonicalReceipt(remote, tx, values[1], tx_hash);
         status = if (depth < confirmations) "confirming" else if (try c.number(a, try field(values[1], "status")) == 1) "confirmed" else "reverted";
     } else if (tx != .null) {
-        replaced = try replacement(remote, tx, lookback);
+        const scanned = try replacement(remote, tx, previous, lookback);
+        replaced = scanned.replacement;
+        search = scanned.progress;
         if (replaced != .null) {
             status = try string(replaced, "kind");
             if (c.field(replaced, "confirmations")) |n| {
@@ -181,7 +241,9 @@ pub fn observe(remote: *rpc.Rpc, tx_hash: []const u8, previous: ?c.Value, confir
         }
     }
     if (!try remote.canonical(remote.block)) return error.TransactionReorganized;
-    var report = try c.parse(a, try c.encode(a, .{ .chainId = remote.chain, .hash = canonical_hash, .status = status, .transaction = tx, .receipt = values[1], .replacement = replaced, .confirmations = depth, .requiredConfirmations = confirmations, .block = remote.block, .replacementLookback = lookback }));
+    var report = try c.parse(a, try c.encode(a, .{ .chainId = remote.chain, .hash = canonical_hash, .status = status, .transaction = tx, .receipt = values[1], .replacement = replaced, .confirmations = depth, .requiredConfirmations = confirmations, .block = remote.block, .replacementLookback = lookback, .replacementSearch = search }));
+    try report.object.put(a, "confirmationBasis", .{ .string = if (remote.chain == 42161) "l2-block-depth" else "chain-block-depth" });
+    try report.object.put(a, "finality", try @import("transaction_finality.zig").unchecked(a));
     if (previous) |record| for ([_][]const u8{ "intent", "log" }) |name| if (c.field(record, name)) |value| try report.object.put(a, name, value);
     return report;
 }
@@ -225,7 +287,8 @@ pub fn wait(cast: *Cast, db: ?Store, tx_hash: []const u8, timeout: u64, confirma
         defer arena.deinit();
         var remote = try rpc.Rpc.initEndpoint(arena.allocator(), cast.io, cast.rpc, cast.chain);
         defer remote.deinit();
-        remote.timeout_seconds = @intCast(@min(@max(timeout, 1), 10));
+        // A zero polling duration means one observation, not a one-second RPC.
+        remote.timeout_seconds = if (timeout == 0) 10 else @intCast(@min(timeout - elapsed_before, 10));
         const record = if (previous_bytes) |bytes| try c.parse(arena.allocator(), bytes) else @as(?c.Value, null);
         const report = boundedObserve(&remote, canonical_hash, record, confirmations, lookback, if (timeout == 0) 30 else @min(30, timeout - elapsed_before)) catch |err| {
             // A block can arrive between pinning and the receipt read. Retry
@@ -259,4 +322,109 @@ pub fn verifiedReceipt(report: c.Value) !c.Value {
     const value = if (c.eq(u8, status, "repriced")) try field(try field(report, "replacement"), "receipt") else try field(report, "receipt");
     if (value == .null) return error.InvalidTransactionReceipt;
     return value;
+}
+
+test "one-shot tracking allows an RPC response taking more than one second" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const mock = @import("test_rpc.zig");
+    const block = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"number\":\"0x1\",\"hash\":\"0x" ++ "1111111111111111111111111111111111111111111111111111111111111111" ++ "\",\"timestamp\":\"0x1\"}}]";
+    var server = try mock.Server.init(std.testing.io, &.{
+        .{ .body = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xa4b1\"}]", .delay_ms = 1250 },
+        .{ .body = block },
+        .{ .body = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null},{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}]" },
+        .{ .body = block },
+    });
+    defer server.deinit();
+    var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+    defer _ = serving.cancel(std.testing.io) catch {};
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    var cast: Cast = .{ .a = a, .io = std.testing.io, .env = &env, .chain = 42161, .rpc = try server.url(a) };
+    const report = try wait(&cast, null, "0x" ++ "2222222222222222222222222222222222222222222222222222222222222222", 0, 1, 0, 1);
+    try serving.await(std.testing.io);
+    try std.testing.expectEqualStrings("unknown", try string(report, "status"));
+    try std.testing.expectEqual(@as(usize, 4), server.requests);
+}
+
+test "replacement search resumes batched blocks from durable intent when the original transaction disappears" {
+    const mock = @import("test_rpc.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const original_hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const replacement_hash = "0x2222222222222222222222222222222222222222222222222222222222222222";
+    const block_hash = "0x3333333333333333333333333333333333333333333333333333333333333333";
+    const sender = "0x1111111111111111111111111111111111111111";
+    const target = "0x2222222222222222222222222222222222222222";
+    const head = try c.encode(a, .{.{ .jsonrpc = "2.0", .id = 1, .result = .{ .number = "0x64", .hash = block_hash, .timestamp = "0x1" } }});
+    const missing = try c.encode(a, .{ .{ .jsonrpc = "2.0", .id = 1, .result = @as(c.Value, .null) }, .{ .jsonrpc = "2.0", .id = 2, .result = @as(c.Value, .null) } });
+    const chain = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xa4b1\"}]";
+    const nonce = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x2\"}]";
+    const next = .{ .hash = replacement_hash, .from = sender, .to = target, .nonce = "0x1", .value = "0x0", .input = "0x12", .blockNumber = "0x53", .blockHash = block_hash, .chainId = "0xa4b1" };
+    const receipt = .{ .transactionHash = replacement_hash, .blockNumber = "0x53", .blockHash = block_hash, .status = "0x1" };
+    const initial_replies = [_]mock.Reply{
+        .{ .body = chain },                                                                                                                                                                                                                                                                                  .{ .body = head },                                                                                                                        .{ .body = missing }, .{ .body = nonce },
+        .{ .body = try c.encode(a, .{ .{ .jsonrpc = "2.0", .id = 1, .result = .{ .number = "0x50", .hash = block_hash, .transactions = [_]c.Value{} } }, .{ .jsonrpc = "2.0", .id = 2, .result = .{ .number = "0x51", .hash = block_hash, .transactions = [_]c.Value{} } } }), .request_contains = "0x50" }, .{ .body = head },                                                                                                                        .{ .body = chain },   .{ .body = head },
+        .{ .body = missing },                                                                                                                                                                                                                                                                                .{ .body = nonce },                                                                                                                       .{ .body = head },    .{ .body = try c.encode(a, .{ .{ .jsonrpc = "2.0", .id = 1, .result = .{ .number = "0x52", .hash = block_hash, .transactions = [_]c.Value{} } }, .{ .jsonrpc = "2.0", .id = 2, .result = .{ .number = "0x53", .hash = block_hash, .transactions = .{next} } } }), .request_contains = "0x52" },
+        .{ .body = try c.encode(a, .{.{ .jsonrpc = "2.0", .id = 1, .result = receipt }}) },                                                                                                                                                                                                                  .{ .body = try c.encode(a, .{.{ .jsonrpc = "2.0", .id = 1, .result = .{ .number = "0x53", .hash = block_hash, .timestamp = "0x1" } }}) }, .{ .body = head },
+    };
+    var replies: std.ArrayList(mock.Reply) = .empty;
+    try replies.appendSlice(a, &initial_replies);
+    const Scenario = enum { unchanged, confirming, confirmed, missing, reorg };
+    for (std.enums.values(Scenario)) |scenario| {
+        const current_head = if (scenario == .confirmed) try c.encode(a, .{.{ .jsonrpc = "2.0", .id = 1, .result = .{ .number = "0x65", .hash = block_hash, .timestamp = "0x2" } }}) else head;
+        try replies.appendSlice(a, &.{ .{ .body = chain }, .{ .body = current_head }, .{ .body = missing } });
+        try replies.append(a, .{ .body = if (scenario == .missing) missing else try c.encode(a, .{ .{ .jsonrpc = "2.0", .id = 1, .result = next }, .{ .jsonrpc = "2.0", .id = 2, .result = receipt } }), .request_contains = replacement_hash });
+        if (scenario != .missing) try replies.append(a, .{ .body = try c.encode(a, .{.{ .jsonrpc = "2.0", .id = 1, .result = .{ .number = "0x53", .hash = if (scenario == .reorg) original_hash else block_hash, .timestamp = "0x1" } }}) });
+        if (scenario == .missing or scenario == .reorg) {
+            try replies.append(a, .{ .body = nonce });
+            try replies.append(a, .{ .body = try c.encode(a, .{ .{ .jsonrpc = "2.0", .id = 1, .result = .{ .number = "0x50", .hash = block_hash, .transactions = [_]c.Value{} } }, .{ .jsonrpc = "2.0", .id = 2, .result = .{ .number = "0x51", .hash = block_hash, .transactions = [_]c.Value{} } } }), .request_contains = "0x50" });
+        }
+        try replies.append(a, .{ .body = current_head });
+    }
+    var server = try mock.Server.init(std.testing.io, replies.items);
+    defer server.deinit();
+    var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+    defer _ = serving.cancel(std.testing.io) catch {};
+    var remote = try rpc.Rpc.initEndpoint(a, std.testing.io, try server.url(a), 42161);
+    defer remote.deinit();
+    remote.timeout_seconds = 1;
+    remote.read_attempts = 1;
+    const previous = try c.parse(a, try c.encode(a, .{ .intent = .{ .chainId = 42161, .from = sender, .nonce = 1, .to = target, .value = "0", .dataHash = try c.hex(a, @import("miniscript").bytecode.hash(&.{0x12})), .submissionBlock = .{ .number = 80 } } }));
+    const reconstructed = try originalFromIntent(a, original_hash, previous);
+    try validateTransaction(a, reconstructed, original_hash, 42161);
+    const first = try observe(&remote, original_hash, previous, 1, 2);
+    try std.testing.expectEqualStrings("nonce-used", try string(first, "status"));
+    try std.testing.expectEqual(@as(u64, 82), try rpc.integer(a, try field(try field(first, "replacementSearch"), "nextBlock")));
+    const persisted = try c.parse(a, try c.encode(a, first));
+    const second = try observe(&remote, original_hash, persisted, 1, 2);
+    try std.testing.expectEqualStrings("repriced", try string(second, "status"));
+    try std.testing.expectEqualStrings(replacement_hash, try string(try field(second, "replacement"), "hash"));
+    var known = try redact(a, second);
+    for (std.enums.values(Scenario)) |scenario| {
+        // Also prove that invalidated replacements discard stale scan progress.
+        if (scenario == .missing or scenario == .reorg) {
+            known = try redact(a, second);
+            try known.object.put(a, "replacementSearch", try field(first, "replacementSearch"));
+        }
+        const observed = try observe(&remote, original_hash, known, if (scenario == .unchanged) 1 else 19, 2);
+        const expected: []const u8 = switch (scenario) {
+            .unchanged, .confirmed => "repriced",
+            .confirming => "confirming-replacement",
+            .missing, .reorg => "nonce-used",
+        };
+        try std.testing.expectEqualStrings(expected, try string(observed, "status"));
+        if (scenario == .missing or scenario == .reorg) {
+            try std.testing.expectEqual(82, try rpc.integer(a, try field(try field(observed, "replacementSearch"), "nextBlock")));
+            try std.testing.expect(c.field(try field(observed, "replacement"), "hash") == null);
+        } else {
+            try std.testing.expectEqualStrings(replacement_hash, try string(try field(observed, "replacement"), "hash"));
+            try std.testing.expectEqual(@as(u64, if (scenario == .confirmed) 19 else 18), try rpc.integer(a, try field(observed, "confirmations")));
+        }
+        known = try redact(a, observed);
+    }
+    try serving.await(std.testing.io);
+    try std.testing.expectEqual(replies.items.len, server.requests);
 }

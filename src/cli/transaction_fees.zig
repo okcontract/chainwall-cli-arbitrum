@@ -115,6 +115,11 @@ pub fn normalize(cast: *Cast, input: c.Value, from: []const u8) !c.Value {
     return result;
 }
 pub const Prices = struct { legacy: bool, base: u256, maximum: u256, priority: u256, expected: u256 };
+pub fn gasLimit(estimated: u64, explicit: ?u64) !u64 {
+    const limit = explicit orelse try std.math.add(u64, estimated, try std.math.divCeil(u64, estimated, 5));
+    if (limit < estimated) return error.GasLimitBelowEstimate;
+    return limit;
+}
 pub fn prices(remote: *rpc.Rpc, options: Options) !Prices {
     const a = remote.a;
     try options.validate();
@@ -144,7 +149,7 @@ pub fn prices(remote: *rpc.Rpc, options: Options) !Prices {
 pub fn estimate(cast: *Cast, input: c.Value) !c.Value {
     if (cast.auth != null) return error.EstimateRequiresOuterTransaction;
     const a = cast.a;
-    const from = cast.from orelse try cast.signerAddress();
+    const from = try cast.callerAddress();
     const options = try cast.fees.fromRequest(a, try request(input));
     var tx = try normalize(cast, input, from);
     var remote = try rpc.Rpc.initEndpoint(a, cast.io, cast.rpc, cast.chain);
@@ -161,13 +166,12 @@ pub fn estimate(cast: *Cast, input: c.Value) !c.Value {
     // Numeric block selectors are broadly supported for estimateGas. Verify
     // the canonical hash on both sides to detect a change at that height.
     const gas = try rpc.integer(a, try remote.one("eth_estimateGas", try abi.array(a, &.{ tx, .{ .string = try rpc.quantity(a, remote.block.number) } })));
-    const limit = options.gas_limit orelse try std.math.add(u64, gas, try std.math.divCeil(u64, gas, 5));
-    if (limit < gas) return error.GasLimitBelowEstimate;
+    const limit = try gasLimit(gas, options.gas_limit);
     const balance = try c.number(a, try remote.one("eth_getBalance", try abi.array(a, &.{ .{ .string = from }, try remote.blockSelector() })));
     if (!try remote.canonical(remote.block)) return error.ChainReorganizedRetrySync;
     const expected = try std.math.mul(u256, gas, fees.expected);
     const maximum = try std.math.mul(u256, limit, fees.maximum);
     const total = try std.math.add(u256, maximum, try c.number(a, try field(tx, "value")));
     try tx.object.put(a, "gas", try quantity(a, limit));
-    return c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .transaction = tx, .block = remote.block, .estimatedGas = gas, .gasLimit = limit, .feeModel = if (fees.legacy) "legacy" else "eip1559", .baseFeePerGas = try abi.uint(a, fees.base), .maxFeePerGas = try abi.uint(a, fees.maximum), .maxPriorityFeePerGas = try abi.uint(a, fees.priority), .estimatedExecutionFeeWei = try abi.uint(a, expected), .maximumExecutionFeeWei = try abi.uint(a, maximum), .maximumValueAndExecutionFeeWei = try abi.uint(a, total), .balanceWei = try abi.uint(a, balance), .balanceSufficient = balance >= total, .feeScope = "execution-gas-only" }));
+    return c.parse(a, try c.encode(a, .{ .chainId = cast.chain, .transaction = tx, .block = remote.block, .estimatedGas = gas, .gasLimit = limit, .feeModel = if (fees.legacy) "legacy" else "eip1559", .baseFeePerGas = try abi.uint(a, fees.base), .maxFeePerGas = try abi.uint(a, fees.maximum), .maxPriorityFeePerGas = try abi.uint(a, fees.priority), .estimatedTransactionFeeWei = try abi.uint(a, expected), .maximumTransactionFeeWei = try abi.uint(a, maximum), .maximumValueAndFeeWei = try abi.uint(a, total), .balanceWei = try abi.uint(a, balance), .balanceSufficient = balance >= total, .feeScope = if (cast.chain == 42161) "arbitrum-total-transaction-fee" else "rpc-gas-estimate" }));
 }

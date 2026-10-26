@@ -66,7 +66,7 @@ const Analyzer = struct {
         s.halted = true;
     }
     fn push(s: *Analyzer, value: Symbol) !void {
-        if (s.stack.items.len >= 1024) return s.fail("Analysis stack limit exceeded.");
+        if (s.stack.items.len >= ms.limits.stack_words) return s.fail("Analysis stack limit exceeded.");
         try s.stack.append(s.a, value);
     }
     fn pop(s: *Analyzer) !Symbol {
@@ -109,12 +109,12 @@ const Analyzer = struct {
         const state = try c.encode(s.a, .{ .pc = pc, .stack = s.stack.items });
         const hash = bc.hash(state);
         if (s.seen.contains(hash)) return;
-        if (s.seen.count() >= 4096) return s.issue("Analysis state limit exceeded.");
+        if (s.seen.count() >= ms.limits.analysis_states) return s.issue("Analysis state limit exceeded.");
         try s.seen.put(s.a, hash, {});
         try s.states.append(s.a, .{ .pc = pc, .stack = try s.a.dupe(Symbol, s.stack.items) });
     }
     fn computed(s: *Analyzer, description: []const u8, values: []const Symbol) !void {
-        const bounded = if (description.len <= 4096) description else try std.mem.concat(s.a, u8, &.{ description[0..4093], "..." });
+        const bounded = if (description.len <= ms.limits.analysis_description_bytes) description else try std.mem.concat(s.a, u8, &.{ description[0 .. ms.limits.analysis_description_bytes - 3], "..." });
         try s.push(.{ .kind = .computed, .description = bounded, .sources = try s.unionSources(values) });
     }
     fn binary(s: *Analyzer, op: Op) !void {
@@ -172,15 +172,15 @@ const Analyzer = struct {
         const count = (try s.pop()).number() orelse return s.fail("Unable to determine number of call arguments.");
         const selector = try s.pop();
         const target = try s.pop();
-        if (count > 1024) return s.fail("Unable to determine number of call arguments.");
+        if (count > ms.limits.analysis_frame_words) return s.fail("Unable to determine number of call arguments.");
         const mask = if (kinds) |k| k.number() orelse return s.fail("Unable to determine argument kind bitmask.") else 0;
         const args = try s.a.alloc(c.Value, @intCast(count));
         for (0..args.len) |step| {
             const index = if (extended) args.len - 1 - step else step;
-            if (index < 256 and (mask >> @as(u8, @intCast(index))) & 1 == 1) {
+            if (index < ms.limits.argument_mask_bits and (mask >> @as(u8, @intCast(index))) & 1 == 1) {
                 const length = try s.pop();
                 const n = length.number() orelse return s.fail("Dynamic array length encountered; analysis cannot continue.");
-                if (n > 1024) return s.fail("Array length out of supported bounds.");
+                if (n > ms.limits.analysis_frame_words) return s.fail("Array length out of supported bounds.");
                 const elements = try s.a.alloc(c.Value, @intCast(n));
                 for (0..elements.len) |j| {
                     const v = try s.pop();
@@ -246,7 +246,7 @@ const Analyzer = struct {
             var terminated = false;
             while (pc < bytes.len and !s.halted) {
                 s.steps += 1;
-                if (s.steps > 131072) return s.issue("Analysis instruction limit exceeded.");
+                if (s.steps > ms.limits.analysis_steps) return s.issue("Analysis instruction limit exceeded.");
                 const op: Op = @fromBackingInt(@intCast(bytes[pc]));
                 const width = try bc.immediateLength(op, bytes[pc + 1 ..]);
                 const immediate = bytes[pc + 1 ..][0..width];
@@ -378,7 +378,7 @@ const Analyzer = struct {
                             try s.fail("CALLI has non-constant or invalid arg count.");
                             break;
                         };
-                        if (n > 1024) {
+                        if (n > ms.limits.analysis_frame_words) {
                             try s.fail("CALLI has non-constant or invalid arg count.");
                             break;
                         }
@@ -462,7 +462,7 @@ pub fn analyze(a: c.A, bytes: []const u8, options: Options) !c.Value {
     }
     if (options.linked and s.terminals.items.len == 0) try s.issue("Linked MiniScript has no reachable successful terminal path.");
     if (runtime.localStaticReferenceCount >= 96) try s.warnings.put(a, try a.print("Local static references: {d}/128; nested CALLI dependencies share the runtime limit.", .{runtime.localStaticReferenceCount}), {});
-    if (runtime.localStaticReferenceCount > 128) try s.issue("Static reference runtime limit exceeded.");
+    if (runtime.localStaticReferenceCount > ms.limits.static_references) try s.issue("Static reference runtime limit exceeded.");
     if (!refs.complete) try s.issue("Static reference discovery is incomplete.");
     if (runtime.calliCount > 0) try s.warnings.put(a, "CALLI children share the static-reference and maxSteps budgets; their code is not included in this local analysis.", {});
     if (runtime.staticLinkCount > 0) try s.warnings.put(a, "Linked programs require separate analysis and current runtime authorization.", {});

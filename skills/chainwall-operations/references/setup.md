@@ -60,8 +60,9 @@ chainwall timelock pending
 ```
 
 Cached lists represent their checkpoint block. Use live method reads and fresh
-simulation for decisions. Unindexed enumeration can require an Etherscan token
-and the correct deployment log range; an empty old cache proves little.
+simulation for decisions. Unindexed enumeration supports `sync --log-source rpc`
+without an explorer token. Set the correct deployment log range; an empty old
+cache proves little. The default `auto` falls back to RPC if the explorer is unavailable.
 
 ## Deploy a tenant when requested
 

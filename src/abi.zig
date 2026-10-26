@@ -29,7 +29,7 @@ fn parameter(a: t.Allocator, input: std.json.Value, depth: usize, count: *usize)
     const raw = try json.string(json.field(input, "type") orelse return error.InvalidDescriptor);
     const start = std.mem.indexOfScalar(u8, raw, '[') orelse raw.len;
     const dimensions = std.mem.count(u8, raw[start..], "[");
-    if (dimensions > 16 or depth + dimensions > 16 or count.* >= 256 or dimensions >= 256 - count.*) return error.InvalidDescriptor;
+    if (dimensions > t.limits.abi_schema_depth or depth + dimensions > t.limits.abi_schema_depth or count.* >= t.limits.abi_schema_nodes or dimensions >= t.limits.abi_schema_nodes - count.*) return error.InvalidDescriptor;
     count.* += 1 + dimensions;
     const base = raw[0..start];
     var node: *Schema = undefined;
@@ -62,7 +62,7 @@ fn parameter(a: t.Allocator, input: std.json.Value, depth: usize, count: *usize)
         const wrapper = try create(a, if (end == pos + 1) .dynamic_array else .fixed_array);
         if (wrapper.kind == .fixed_array) {
             wrapper.length = std.fmt.parseInt(u16, raw[pos + 1 .. end], 10) catch return error.InvalidDescriptor;
-            if (wrapper.length == 0 or wrapper.length > 256) return error.InvalidDescriptor;
+            if (wrapper.length == 0 or wrapper.length > t.limits.abi_array_elements) return error.InvalidDescriptor;
         }
         wrapper.children = try a.dupe(*Schema, &.{node});
         node = wrapper;
@@ -72,7 +72,12 @@ fn parameter(a: t.Allocator, input: std.json.Value, depth: usize, count: *usize)
 }
 fn canonical(a: t.Allocator, input: std.json.Value) Error![]const u8 {
     const raw = try json.string(json.field(input, "type") orelse return error.InvalidDescriptor);
-    if (!std.mem.startsWith(u8, raw, "tuple")) return raw;
+    if (!std.mem.startsWith(u8, raw, "tuple")) {
+        const end = std.mem.indexOfScalar(u8, raw, '[') orelse raw.len;
+        const base = raw[0..end];
+        if (t.same(base, "uint") or t.same(base, "int")) return a.print("{s}256{s}", .{ base, raw[end..] });
+        return raw;
+    }
     const components = json.field(input, "components") orelse return error.InvalidDescriptor;
     if (components != .array) return error.InvalidDescriptor;
     var out: std.Io.Writer.Allocating = .init(a);
@@ -84,6 +89,8 @@ fn canonical(a: t.Allocator, input: std.json.Value) Error![]const u8 {
     out.writer.print("){s}", .{raw[5..]}) catch return error.OutOfMemory;
     return out.toOwnedSlice();
 }
+/// Arena-oriented schema graph, signature and descriptor. Partial allocations
+/// on failure also belong to a. The input JSON is borrowed during this call.
 pub fn method(a: t.Allocator, value: std.json.Value) Error!Method {
     const name = try json.string(json.field(value, "name") orelse return error.InvalidDescriptor);
     if (name.len == 0) return error.InvalidDescriptor;
@@ -107,7 +114,7 @@ pub fn method(a: t.Allocator, value: std.json.Value) Error!Method {
 }
 fn encodeNode(a: t.Allocator, node: *Schema, bytes: *std.ArrayList(u8), depth: usize, count: *usize) Error!void {
     count.* += 1;
-    if (depth > 16 or count.* > 256) return error.InvalidDescriptor;
+    if (depth > t.limits.abi_schema_depth or count.* > t.limits.abi_schema_nodes) return error.InvalidDescriptor;
     const start = bytes.items.len;
     try bytes.appendSlice(a, &.{ @backingInt(node.kind), 0, 0 });
     switch (node.kind) {
@@ -128,12 +135,12 @@ pub fn encodeSchema(a: t.Allocator, root: *Schema) Error![]const u8 {
     try bytes.append(a, 1);
     var count: usize = 0;
     try encodeNode(a, root, &bytes, 1, &count);
-    if (bytes.items.len > 1024) return error.InvalidDescriptor;
+    if (bytes.items.len > t.limits.abi_descriptor_bytes) return error.InvalidDescriptor;
     return bytes.toOwnedSlice(a);
 }
 fn decodeNode(a: t.Allocator, bytes: []const u8, cursor: *usize, depth: usize, count: *usize) Error!*Schema {
     count.* += 1;
-    if (depth > 16 or count.* > 256 or cursor.* + 3 > bytes.len) return error.InvalidDescriptor;
+    if (depth > t.limits.abi_schema_depth or count.* > t.limits.abi_schema_nodes or cursor.* + 3 > bytes.len) return error.InvalidDescriptor;
     const kind = std.enums.fromInt(Kind, bytes[cursor.*]) orelse return error.InvalidDescriptor;
     const len: usize = @intCast(bc.word(bytes[cursor.* + 1 ..][0..2]));
     cursor.* += 3;
@@ -160,7 +167,7 @@ fn decodeNode(a: t.Allocator, bytes: []const u8, cursor: *usize, depth: usize, c
             if (kind == .fixed_array) {
                 if (len < 2) return error.InvalidDescriptor;
                 node.length = @intCast(bc.word(bytes[cursor.*..][0..2]));
-                if (node.length == 0 or node.length > 256) return error.InvalidDescriptor;
+                if (node.length == 0 or node.length > t.limits.abi_array_elements) return error.InvalidDescriptor;
                 cursor.* += 2;
             }
             node.children = try a.dupe(*Schema, &.{try decodeNode(a, bytes[0..end], cursor, depth + 1, count)});
@@ -170,7 +177,7 @@ fn decodeNode(a: t.Allocator, bytes: []const u8, cursor: *usize, depth: usize, c
     return node;
 }
 pub fn decodeSchema(a: t.Allocator, bytes: []const u8) Error!*Schema {
-    if (bytes.len < 4 or bytes.len > 1024 or bytes[0] != 1) return error.InvalidDescriptor;
+    if (bytes.len < 4 or bytes.len > t.limits.abi_descriptor_bytes or bytes[0] != 1) return error.InvalidDescriptor;
     var cursor: usize = 1;
     var count: usize = 0;
     const root = try decodeNode(a, bytes, &cursor, 1, &count);
@@ -187,7 +194,7 @@ fn layout(n: *Schema) Error!struct { dynamic: bool, size: usize } {
         if (!child.dynamic) size += child.size;
     }
     if (n.kind == .fixed_array) size *= n.length;
-    if (size > 16380) return error.InvalidDescriptor;
+    if (size > t.limits.abi_call_bytes - 4) return error.InvalidDescriptor;
     return .{ .dynamic = dynamic, .size = if (dynamic) 0 else size };
 }
 const Plan = struct { dynamic: bool, words: []const u16 };
@@ -223,13 +230,13 @@ const Planner = struct {
     }
     fn node(p: *Planner, n: *Schema) Error!Plan {
         p.visits += 1;
-        if (p.visits > 4096) return error.InvalidDescriptor;
+        if (p.visits > t.limits.abi_plan_visits) return error.InvalidDescriptor;
         switch (n.kind) {
             .uint, .int, .address, .boolean, .fixed_bytes => return .{ .dynamic = false, .words = try p.a.dupe(u16, &.{try p.consume(scalarValidation(n))}) },
             .dynamic_bytes => {
                 if (p.cursor >= p.validations.len or p.validations[p.cursor].tag != 0x80) return error.InvalidDescriptor;
                 const length = p.validations[p.cursor];
-                if (length.exact > 8192) return error.InvalidDescriptor;
+                if (length.exact > t.limits.abi_dynamic_bytes) return error.InvalidDescriptor;
                 var words: std.ArrayList(u16) = .empty;
                 try words.append(p.a, try p.consume(length));
                 const count = (@as(usize, length.exact) + 31) / 32;
@@ -246,7 +253,7 @@ const Planner = struct {
                     if (p.cursor >= p.validations.len or p.validations[p.cursor].tag != 0x80) return error.InvalidDescriptor;
                     const v = p.validations[p.cursor];
                     length = v.exact;
-                    if (length > 256) return error.InvalidDescriptor;
+                    if (length > t.limits.abi_array_elements) return error.InvalidDescriptor;
                     length_word = try p.consume(v);
                 }
                 var items: std.ArrayList(Plan) = .empty;
@@ -272,13 +279,13 @@ pub fn precompiled(a: t.Allocator, schema: []const u8, validations: []const Vali
     const root = try decodeSchema(a, schema);
     var planner: Planner = .{ .a = a, .validations = validations };
     const plan = try planner.node(root);
-    if (planner.cursor != validations.len or 4 + plan.words.len * 32 > 16384) return error.InvalidDescriptor;
+    if (planner.cursor != validations.len or 4 + plan.words.len * 32 > t.limits.abi_call_bytes) return error.InvalidDescriptor;
     // Version-1 fallback still requires a valid expanded calldata layout.
-    if (validations.len > 256) return error.ResourceLimit;
+    if (validations.len > t.limits.abi_tape_words) return error.ResourceLimit;
     var length: usize = 0;
     for (validations) |v| length += if (v.tag == 0x80) @as(usize, 3) else 1;
     const size = 9 + schema.len + length + plan.words.len * 2;
-    if (size > 1024) return error.ResourceLimit;
+    if (size > t.limits.abi_descriptor_bytes) return error.ResourceLimit;
     const bytes = try a.alloc(u8, size);
     bytes[0] = 2;
     bc.put(bytes[1..3], schema.len);
@@ -302,15 +309,17 @@ pub fn precompiled(a: t.Allocator, schema: []const u8, validations: []const Vali
     return bytes;
 }
 pub const Descriptor = struct { root: *Schema, schema: []const u8, validations: []const Validation = &.{} };
+/// root and validations use a's arena; schema borrows bytes. Retain both the
+/// input bytes and arena. No independent Descriptor.deinit is provided.
 pub fn decode(a: t.Allocator, bytes: []const u8) Error!Descriptor {
-    if (bytes.len < 4 or bytes.len > 1024) return error.InvalidDescriptor;
+    if (bytes.len < 4 or bytes.len > t.limits.abi_descriptor_bytes) return error.InvalidDescriptor;
     if (bytes[0] == 1) return .{ .root = try decodeSchema(a, bytes), .schema = bytes };
     if (bytes[0] != 2 or bytes.len < 9) return error.InvalidDescriptor;
     const schema_len: usize = @intCast(bc.word(bytes[1..3]));
     const tape: usize = @intCast(bc.word(bytes[3..5]));
     const output: usize = @intCast(bc.word(bytes[5..7]));
     const vlen: usize = @intCast(bc.word(bytes[7..9]));
-    if (schema_len < 4 or tape > 256 or 9 + schema_len + vlen + output * 2 != bytes.len) return error.InvalidDescriptor;
+    if (schema_len < 4 or tape > t.limits.abi_tape_words or 9 + schema_len + vlen + output * 2 != bytes.len) return error.InvalidDescriptor;
     const schema = bytes[9..][0..schema_len];
     const root = try decodeSchema(a, schema);
     var validations: std.ArrayList(Validation) = .empty;
@@ -333,4 +342,22 @@ pub fn decode(a: t.Allocator, bytes: []const u8) Error!Descriptor {
     const expected = try precompiled(a, schema, validations.items);
     if (!std.mem.eql(u8, expected, bytes)) return error.InvalidDescriptor;
     return .{ .root = root, .schema = schema, .validations = validations.items };
+}
+
+test "ABI integer aliases canonicalize selectors recursively" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cases = [_]struct { inputs: []const u8, signature: []const u8 }{
+        .{ .inputs = "[{\"type\":\"uint\"}]", .signature = "f(uint256)" },
+        .{ .inputs = "[{\"type\":\"int[]\"}]", .signature = "f(int256[])" },
+        .{ .inputs = "[{\"type\":\"tuple[]\",\"components\":[{\"type\":\"uint[2]\"},{\"type\":\"int\"}]}]", .signature = "f((uint256[2],int256)[])" },
+    };
+    for (cases) |case| {
+        const source = try a.print("{{\"name\":\"f\",\"stateMutability\":\"view\",\"inputs\":{s}}}", .{case.inputs});
+        const value = try std.json.parseFromSlice(std.json.Value, a, source, .{});
+        const result = try method(a, value.value);
+        try std.testing.expectEqualStrings(case.signature, result.signature);
+        try std.testing.expectEqual(@as(u32, @intCast(bc.hash(case.signature) >> 224)), result.selector);
+    }
 }

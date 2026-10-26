@@ -80,7 +80,29 @@ current editor buffer, including unsaved edits.
 
 ### Neovim
 
-With Neovim 0.11 or later, configure the native LSP client:
+The distribution includes a native Neovim package with `.ls` file association,
+syntax highlighting, indentation defaults, and automatic LSP attachment. It
+requires Neovim 0.11 or later and is tested with
+[Neovim 0.11.5](https://github.com/neovim/neovim/releases/tag/v0.11.5).
+Install the package from your unpacked release (replace `PREFIX`):
+
+```sh
+mkdir -p ~/.config/nvim/pack/chainwall/start
+cp -R PREFIX/share/chainwall/editors/neovim ~/.config/nvim/pack/chainwall/start/chainwall
+```
+
+For a source checkout, copy `editors/neovim` instead. Put `chainwall-lsp` on your
+`PATH`, then restart Neovim. Keep the package and binaries from the same release;
+update by replacing that `chainwall` package directory. The `.ls` association
+takes precedence over other languages using that extension. To supply startup
+options, set this before packages load in `init.lua`:
+
+```lua
+vim.g.chainwall_lsp_cmd = { 'chainwall-lsp', '--stdio', '--profile', 'work' }
+```
+
+If you prefer to maintain your own configuration, the equivalent native client
+setup is:
 
 ```lua
 vim.filetype.add({ extension = { ls = 'lambdascript' } })
@@ -96,6 +118,14 @@ Open a `.ls` file below `chainwall-lsp.json`. Use `K` for hover and insert-mode
 `Ctrl-X Ctrl-O` for completion. The standard LSP actions provide rename, references,
 formatting, and code actions. `:checkhealth vim.lsp` helps diagnose attachment.
 See [Neovim's LSP guide](https://neovim.io/doc/user/lsp/) for client configuration.
+The package provides syntax highlighting before the server attaches; semantic
+tokens refine highlighting once it is running. The native Zig smoke test runs
+a real headless editor, checks file association and highlighting, and requests
+hover and diagnostics from the actual server:
+
+```sh
+zig build test-editor -Dneovim=/path/to/nvim
+```
 
 For example, open the code-action menu with:
 
@@ -476,3 +506,10 @@ API tokens, or wallet configuration.
 The implementation follows the [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/).
 The toolchain's [test documentation](COMPILER.md#tests) describes the native
 compiler tests and checked-in fixtures.
+
+Formatting honors `insertSpaces` and `tabSize` (1–32). Tabs use one tab per
+nesting level; spaces use the requested width. The first line ending in a
+buffer selects LF, CRLF, or CR for generated whitespace; a buffer without line
+breaks uses LF. Mixed structural whitespace is normalized to that style, string
+contents are preserved, and output ends with one line ending. Invalid source
+produces no formatting edits. UTF-8/UTF-16 positions also recognize CR-only input.

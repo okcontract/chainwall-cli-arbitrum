@@ -35,7 +35,7 @@ fn chain(a: c.A, value: c.Value) !?u64 {
     if (value == .null) return null;
     try nullableNumber(a, value);
     const n = c.number(a, value) catch return error.InvalidConfigurationChain;
-    if (n == 0 or n > 9007199254740991) return error.InvalidConfigurationChain;
+    if (n == 0 or n > config.max_chain_id) return error.InvalidConfigurationChain;
     return @intCast(n);
 }
 
@@ -273,4 +273,27 @@ pub fn exportFile(a: c.A, io: std.Io, env: *const std.process.Environ.Map, dir: 
         if (!c.eq(u8, file, "-")) return c.write(io, file, encoded, true);
     }
     try display.printJson(io, encoded, colored);
+}
+
+test "profile chain IDs remain exact and export safely at their supported boundary" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    var profile: config.Profile = .{};
+    try profile.set(a, "chain", "9007199254740991");
+    const out = try a.print("{s}/export.json", .{dir});
+    try exportFile(a, std.testing.io, &env, dir, profile, out, null, false);
+    const exported = try c.parse(a, try c.read(a, std.testing.io, out));
+    try std.testing.expectEqual(@as(u256, config.max_chain_id), try c.number(a, try field(exported, "chainId")));
+    for ([_][]const u8{ "0", "9007199254740992", "9223372036854775808", "18446744073709551615" }) |invalid| {
+        try std.testing.expectError(error.InvalidChainId, profile.set(a, "chain", invalid));
+        // Even a constructed profile that bypasses parsing must not panic in export.
+        try profile.values.put(a, "chain", invalid);
+        try std.testing.expectError(error.InvalidChainId, exportFile(a, std.testing.io, &env, dir, profile, null, null, false));
+    }
 }

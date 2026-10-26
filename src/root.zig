@@ -1,7 +1,11 @@
+//! Allocation contracts are listed in COMPILER.md. High-level compile,
+//! decompile, disasm, assemble and leanProgram return independently owned slices.
+//! Lower-level syntax/IR/ABI APIs generally require a caller-owned arena.
 const std = @import("std");
 pub const parser = @import("parser.zig");
 pub const syntax = @import("syntax.zig");
 pub const tree = @import("tree.zig");
+pub const limits = @import("limits.zig");
 pub const bytecode = @import("bytecode.zig");
 pub const abi = @import("abi.zig");
 const lower = @import("lower.zig");
@@ -12,15 +16,17 @@ pub const Settings = lower.Settings;
 pub const references = @import("references.zig");
 const validate = @import("validate.zig");
 pub const Error = tree.Error;
+pub const Diagnostic = tree.Diagnostic;
 pub const json = @import("json.zig");
 pub const leanProgram = @import("lean.zig").program;
 pub const decompile = @import("decompile.zig").decompile;
 pub const disasm = @import("assembly.zig").disasm;
 pub const assemble = @import("assembly.zig").assemble;
 
-fn emit(a: std.mem.Allocator, root: *tree.Node) Error![]u8 {
-    var generator: codegen.Generator = .{ .builder = .{ .a = a } };
-    try validate.semantic(root);
+fn emit(a: std.mem.Allocator, root: *tree.Node, diagnostic: *Diagnostic) Error![]u8 {
+    errdefer diagnostic.locate(root.span);
+    var generator: codegen.Generator = .{ .builder = .{ .a = a }, .diagnostic = diagnostic };
+    try validate.semanticDetailed(root, diagnostic);
     const items = try generator.run(root);
     const original = try bytecode.encode(a, items);
     const result = try bytecode.encode(a, try optimize.machine(a, items));
@@ -31,26 +37,53 @@ fn emit(a: std.mem.Allocator, root: *tree.Node) Error![]u8 {
 /// The returned bytes belong to the caller. All intermediate allocations are
 /// scoped to this compilation and released even on invalid input.
 pub fn compile(a: std.mem.Allocator, source: []const u8, settings: Settings) Error![]u8 {
+    var diagnostic: Diagnostic = .{};
+    return compileDetailed(a, source, settings, &diagnostic);
+}
+
+/// Same ownership as compile. On failure, diagnostic contains static strings
+/// and source offsets which remain valid after intermediate arenas are freed.
+pub fn compileDetailed(a: std.mem.Allocator, source: []const u8, settings: Settings, diagnostic: *Diagnostic) Error![]u8 {
+    diagnostic.* = .{};
+    return compileInner(a, source, settings, diagnostic) catch |err| {
+        diagnostic.record(.{ .end = source.len }, err);
+        return err;
+    };
+}
+fn compileInner(a: std.mem.Allocator, source: []const u8, settings: Settings, diagnostic: *Diagnostic) Error![]u8 {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     const temp = arena.allocator();
-    var f: tree.Factory = .{ .a = temp };
+    var f: tree.Factory = .{ .a = temp, .diagnostic = diagnostic };
     var p: parser.Parser = .{ .f = &f, .source = source };
-    const program = try p.parse();
-    var l: lower.Lowerer = .{ .f = &f, .settings = try json.normalize(temp, settings) };
+    const program = p.parse() catch |err| {
+        diagnostic.record(.{ .start = p.token.start, .end = @min(source.len, p.token.start + p.token.text.len) }, err);
+        return err;
+    };
+    diagnostic.phase = .settings;
+    const normalized_settings = try json.normalize(temp, settings);
+    diagnostic.phase = .lower;
+    var l: lower.Lowerer = .{ .f = &f, .settings = normalized_settings };
     const lowered = try l.run(program);
-    try validate.semantic(lowered);
+    diagnostic.phase = .validate;
+    try validate.semanticDetailed(lowered, diagnostic);
+    diagnostic.phase = .normalize;
     var normalizer: normalize.Normalizer = .{ .f = &f };
     const normalized = try normalizer.run(lowered);
     try validate.boundedDepth(normalized, 0);
     const root = try lower.dependencies(&f, try normalize.schedule(&f, normalized, false));
-    var best = try emit(temp, root);
+    diagnostic.phase = .generate;
+    var best = try emit(temp, root, diagnostic);
     const contract = try references.scan(temp, best);
     if (settings.optimization == .size) {
+        diagnostic.phase = .optimize;
         for ([_]struct { max: usize, last: bool }{ .{ .max = 2, .last = true }, .{ .max = 1, .last = false }, .{ .max = 1, .last = true } }) |variant| {
             if (try optimize.constants(&f, root, variant.max, variant.last)) |candidate| {
-                const bytes = emit(temp, candidate) catch |err| {
-                    if (err == error.StackCapacity) continue;
+                const bytes = emit(temp, candidate, diagnostic) catch |err| {
+                    if (err == error.StackCapacity) {
+                        diagnostic.* = .{ .phase = .optimize };
+                        continue;
+                    }
                     return err;
                 };
                 if (!references.same(contract, try references.scan(temp, bytes))) return error.InvalidBytecode;
@@ -58,13 +91,36 @@ pub fn compile(a: std.mem.Allocator, source: []const u8, settings: Settings) Err
             }
         }
     }
-    if ((try references.scan(temp, best)).raw_count > 128) return error.ResourceLimit;
-    return a.dupe(u8, best);
+    if ((try references.scan(temp, best)).raw_count > limits.static_references) return error.ResourceLimit;
+    const result = try a.dupe(u8, best);
+    diagnostic.* = .{};
+    return result;
+}
+
+test "detailed compilation reports phases, exact spans and related bindings" {
+    const a = std.testing.allocator;
+    const cases = [_]struct { source: []const u8, err: Error, text: []const u8, phase: @FieldType(Diagnostic, "phase"), related: bool = false }{
+        .{ .source = "1 + missing", .err = error.UnboundVariable, .text = "missing", .phase = .lower },
+        .{ .source = "let x = 1 and x = 2 in x", .err = error.DuplicateBinding, .text = "x", .phase = .parse, .related = true },
+        .{ .source = "let x = x in x", .err = error.CyclicDefinition, .text = "x", .phase = .lower, .related = true },
+        .{ .source = "$staticLinked(-2)", .err = error.InvalidConstant, .text = "-2", .phase = .lower },
+        .{ .source = "1 + $sqrt()", .err = error.InvalidArguments, .text = "$sqrt()", .phase = .lower },
+    };
+    for (cases) |case| {
+        var diagnostic: Diagnostic = .{};
+        try std.testing.expectError(case.err, compileDetailed(a, case.source, .{}, &diagnostic));
+        try std.testing.expectEqualStrings(@errorName(case.err), diagnostic.code);
+        try std.testing.expectEqualStrings(case.text, case.source[diagnostic.primary.?.start..diagnostic.primary.?.end]);
+        try std.testing.expectEqual(case.phase, diagnostic.phase);
+        try std.testing.expectEqual(case.related, diagnostic.related != null);
+    }
 }
 
 test {
+    _ = json;
     _ = parser;
     _ = bytecode;
+    _ = abi;
 }
 test "standalone compiler exact arithmetic, lazy control, and strict locals" {
     const a = std.testing.allocator;

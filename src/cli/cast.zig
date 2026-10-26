@@ -9,6 +9,7 @@ pub const Cast = struct {
     executable: []const u8 = "cast",
     rpc: []const u8 = "",
     chain: u64 = 0,
+    route: @import("command_options.zig").Route = .account,
     instance: []const u8 = "",
     account: ?[]const u8 = null,
     keystore: ?[]const u8 = null,
@@ -47,7 +48,16 @@ pub const Cast = struct {
             s.diagnostic = try s.redact(output.stderr);
             return error.CastFailed;
         }
-        return c.trim(output.stdout);
+        const raw = c.trim(output.stdout);
+        for (args) |arg| if (c.eq(u8, arg, "--json")) {
+            const result = try @import("foundry_output.zig").unwrap(s.a, try c.parse(s.a, raw));
+            if (!result.success) {
+                s.diagnostic = try s.redact(raw);
+                return error.FoundryReportedFailure;
+            }
+            return c.encode(s.a, result.value);
+        };
+        return raw;
     }
     fn redact(s: *Cast, text: []const u8) ![]const u8 {
         // RPC URLs can carry provider credentials. Never copy them into errors.
@@ -87,6 +97,16 @@ pub const Cast = struct {
         // Looking up an address must not inherit or replace the selected signer.
         var wallet_account: Cast = .{ .a = s.a, .io = s.io, .env = s.env, .executable = s.executable, .account = value, .password_file = s.password_file };
         return wallet_account.signerAddress();
+    }
+    /// Resolve a read-only caller without requiring possession of its key.
+    /// Auth-account calls retain their validated account identity.
+    pub fn callerAddress(s: *Cast) ![]const u8 {
+        if (s.auth != null) return s.signerAddress();
+        if (s.from) |from| {
+            try c.address(from);
+            return from;
+        }
+        return s.signerAddress();
     }
     pub fn signerAddress(s: *Cast) ![]const u8 {
         if (s.auth) |auth| {
@@ -190,17 +210,22 @@ pub const Cast = struct {
         if (s.unlocked and s.from == null) return error.UnlockedRequiresFrom;
         if ((s.unlocked and (s.account != null or s.keystore != null)) or (s.account != null and s.keystore != null)) return error.ConflictingSigners;
         if (s.keystore) |path| _ = try @import("json_schema.zig").read(s.a, s.io, "keystore", path);
+        const sender = try s.signerAddress();
+        var remote = try @import("rpc.zig").Rpc.initEndpoint(s.a, s.io, s.rpc, s.chain);
+        defer remote.deinit();
+        const context = try @import("submission_context.zig").resolve(&remote, sender, s.nonce);
         var argv: std.ArrayList([]const u8) = .empty;
+
         try argv.appendSlice(s.a, &.{ s.executable, "send" });
         if (!creating) try argv.appendSlice(s.a, &.{ s.instance, "--data", data });
         try argv.appendSlice(s.a, &.{ "--rpc-url", s.rpc, "--chain", try s.a.print("{d}", .{s.chain}), "--json", "--async" });
         if (s.account) |account| try argv.appendSlice(s.a, &.{ "--account", account });
         if (s.keystore) |path| try argv.appendSlice(s.a, &.{ "--keystore", path });
         if (s.password_file) |path| try argv.appendSlice(s.a, &.{ "--password-file", path });
-        if (s.from) |from| try argv.appendSlice(s.a, &.{ "--from", from });
+        try argv.appendSlice(s.a, &.{ "--from", context.sender });
         if (s.unlocked) try argv.append(s.a, "--unlocked");
         if (value) |amount| try argv.appendSlice(s.a, &.{ "--value", amount });
-        if (s.nonce) |nonce| try argv.appendSlice(s.a, &.{ "--nonce", try s.a.print("{d}", .{nonce}) });
+        try argv.appendSlice(s.a, &.{ "--nonce", try s.a.print("{d}", .{context.nonce}) });
         // --create is a cast subcommand: send options must precede it.
         try s.fees.append(s.a, &argv);
         if (s.access_list) |list| try argv.appendSlice(s.a, &.{ "--access-list", try c.encode(s.a, list) });
@@ -211,7 +236,7 @@ pub const Cast = struct {
         defer signing_env.deinit();
         for ([_][]const u8{ "ETH_PRIVATE_KEY", "ETH_KEYSTORE", "ETH_KEYSTORE_ACCOUNT", "ETH_FROM", "ETH_MNEMONIC", "TEMPO_ACCESS_KEY", "TEMPO_ROOT_ACCOUNT" }) |key| _ = signing_env.orderedRemove(key);
         const calldata_bytes = try @import("abi_codec.zig").unhex(s.a, data);
-        var intent = try c.parse(s.a, try c.encode(s.a, .{ .chainId = s.chain, .to = if (creating) null else s.instance, .dataHash = try c.hex(s.a, @import("miniscript").bytecode.hash(calldata_bytes)), .dataBytes = calldata_bytes.len, .value = value orelse "0", .from = s.from, .nonce = s.nonce }));
+        var intent = try c.parse(s.a, try c.encode(s.a, .{ .chainId = s.chain, .to = if (creating) null else s.instance, .dataHash = try c.hex(s.a, @import("miniscript").bytecode.hash(calldata_bytes)), .dataBytes = calldata_bytes.len, .value = value orelse "0", .from = context.sender, .nonce = context.nonce, .submissionBlock = context.block }));
         try s.fees.overlay(s.a, &intent);
         if (s.access_list) |list| try intent.object.put(s.a, "accessList", list);
         var submission = try c.parse(s.a, try c.encode(s.a, .{ .state = "broadcast-attempt", .transaction = intent }));
@@ -224,12 +249,15 @@ pub const Cast = struct {
         var reader = child.stdout.?.readerStreaming(s.io, &buffer);
         const output = try reader.interface.allocRemaining(s.a, .limited(32 * 1024 * 1024));
         const term = try child.wait(s.io);
-        const failed = term != .exited or term.exited != 0;
+        var failed = term != .exited or term.exited != 0;
         const trimmed = c.trim(output);
-        const parsed: c.Value = if (trimmed.len == 66 and std.mem.startsWith(u8, trimmed, "0x")) .{ .string = trimmed } else c.parse(s.a, output) catch |err| {
+        const raw: c.Value = if (trimmed.len == 66 and std.mem.startsWith(u8, trimmed, "0x")) .{ .string = trimmed } else c.parse(s.a, output) catch |err| {
             if (failed) return error.TransactionFailed;
             return err;
         };
+        const decoded = try @import("foundry_output.zig").unwrap(s.a, raw);
+        failed = failed or !decoded.success;
+        const parsed = decoded.value;
         const receipt = if (parsed == .string) blk: {
             const watch = @import("transaction_watch.zig");
             const tx_hash = try watch.hash(s.a, parsed.string);
@@ -265,3 +293,15 @@ pub const Cast = struct {
         return receipt;
     }
 };
+
+test "read-only caller accepts from without granting signing capability" {
+    var env: std.process.Environ.Map = .init(std.testing.allocator);
+    defer env.deinit();
+    var cast: Cast = .{ .a = std.testing.allocator, .io = std.testing.io, .env = &env, .from = "0x1111111111111111111111111111111111111111" };
+    try std.testing.expectEqualStrings(cast.from.?, try cast.callerAddress());
+    try std.testing.expectError(error.SignerRequired, cast.signerAddress());
+    cast.from = "invalid";
+    try std.testing.expectError(error.InvalidAddress, cast.callerAddress());
+    cast.from = null;
+    try std.testing.expectError(error.SignerRequired, cast.callerAddress());
+}

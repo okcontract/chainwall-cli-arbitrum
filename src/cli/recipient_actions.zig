@@ -38,7 +38,7 @@ pub fn run(cast: *Cast, kv_cast: *Cast, secret: Secret, context: journal.Context
         if (!list) return error.OfflineRecipientListOnly;
         var entries = std.json.Array.init(a);
         for (listing.entries) |entry| try entries.append(try journal.publicEntry(a, entry));
-        const report = try c.parse(a, try c.encode(a, .{ .context = context, .entries = entries.items, .checkpoint = checkpoint, .invalid = listing.invalid, .unreadable = listing.unreadable, .authorization = "unknown" }));
+        const report = try c.parse(a, try c.encode(a, .{ .context = context, .entries = entries.items, .checkpoint = checkpoint, .invalid = listing.invalid, .unreadable = listing.unreadable, .authorization = "unknown", .cache = try @import("cache_metadata.zig").describe(a, "sqlite-cache", checkpoint, .null, listing.invalid > 0 or listing.unreadable > 0) }));
         if (options.out) |path| try c.write(cast.io, path, try c.encode(a, report), false);
         return report;
     }
@@ -48,18 +48,28 @@ pub fn run(cast: *Cast, kv_cast: *Cast, secret: Secret, context: journal.Context
     var remote = try rpc.Rpc.init(a, cast.io, cast.rpc, cast.chain, cast.instance);
     defer remote.deinit();
     try remote.pin(null, 0);
-    if (try c.number(a, try remote.namedAt(cast.instance, try cat.find("registry", "chainwallComponentId"), &.{})) != ms.bytecode.hash("Chainwall.Registry")) return error.InvalidRegistry;
-    _ = try remote.namedAt(cast.instance, try cat.find("policies", "getPolicy"), &.{.{ .string = context.policyId }});
-    if (!(try remote.namedAt(cast.instance, try cat.find("accounts", "isAccountAllowed"), &.{.{ .string = context.vault }})).bool and !(try remote.namedAt(cast.instance, try cat.find("safes", "isSafeAllowed"), &.{.{ .string = context.vault }})).bool) return error.UnregisteredRecipientVault;
+    const checks = try @import("metadata_batch.zig").read(&remote, &.{
+        .{ .address = cast.instance, .method = try cat.find("registry", "chainwallComponentId") },
+        .{ .address = cast.instance, .method = try cat.find("policies", "getPolicy"), .args = &.{.{ .string = context.policyId }} },
+        .{ .address = cast.instance, .method = try cat.find("accounts", "isAccountAllowed"), .args = &.{.{ .string = context.vault }} },
+        .{ .address = cast.instance, .method = try cat.find("safes", "isSafeAllowed"), .args = &.{.{ .string = context.vault }} },
+    });
+    if (try c.number(a, try checks[0].require()) != ms.bytecode.hash("Chainwall.Registry")) return error.InvalidRegistry;
+    _ = try checks[1].require();
+    if (!(try checks[2].require()).bool and !(try checks[3].require()).bool) return error.UnregisteredRecipientVault;
     if (list) {
         var entries = std.json.Array.init(a);
-        for (listing.entries) |entry| {
+        const batch = @import("metadata_batch.zig");
+        const reads = try a.alloc(batch.Read, listing.entries.len);
+        for (listing.entries, reads) |entry, *item| item.* = .{ .address = context.registryAddress, .method = try cat.find("policy-state", "getPolicyUint"), .args = try a.dupe(c.Value, &try parameters(a, context, try field(entry, "commitment"))) };
+        for (listing.entries, try batch.read(&remote, reads)) |entry, result| {
             var row = try journal.publicEntry(a, entry);
-            try row.object.put(a, "authorization", try authorization(&remote, cat, context, try field(entry, "commitment")));
+            try row.object.put(a, "authorization", result.value);
+            if (result.err != null) try row.object.put(a, "authorizationError", try result.detail(a));
             try entries.append(row);
         }
         if (!try remote.canonical(remote.block)) return error.ChainReorganizedRetrySync;
-        const report = try c.parse(a, try c.encode(a, .{ .context = context, .entries = entries.items, .checkpoint = checkpoint, .authorizationBlock = remote.block, .invalid = listing.invalid, .unreadable = listing.unreadable }));
+        const report = try c.parse(a, try c.encode(a, .{ .context = context, .entries = entries.items, .checkpoint = checkpoint, .authorizationBlock = remote.block, .invalid = listing.invalid, .unreadable = listing.unreadable, .cache = try @import("cache_metadata.zig").describe(a, "sqlite-cache", checkpoint, try c.parse(a, try c.encode(a, remote.block)), listing.invalid > 0 or listing.unreadable > 0) }));
         if (options.out) |path| try c.write(cast.io, path, try c.encode(a, report), false);
         return report;
     }

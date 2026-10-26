@@ -1,9 +1,75 @@
 const std = @import("std");
 const ms = @import("miniscript");
 
-// Flatten repeated byte patterns without changing the bounded-input fixtures.
-fn repeat(comptime pattern: []const u8, comptime count: usize) [pattern.len * count]u8 {
-    return std.mem.asBytes(&@as([count][pattern.len]u8, @splat(pattern.*))).*;
+test {
+    _ = @import("semantics.zig");
+}
+
+// Build stress inputs at runtime. Huge comptime aggregate copies can make LLVM
+// spend minutes optimizing a test's stack allocation in safe builds.
+fn repeated(a: std.mem.Allocator, prefix: []const u8, pattern: []const u8, count: usize, suffix: []const u8) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(a);
+    errdefer out.deinit();
+    try out.writer.writeAll(prefix);
+    for (0..count) |_| try out.writer.writeAll(pattern);
+    try out.writer.writeAll(suffix);
+    return out.toOwnedSlice();
+}
+
+// A small independent execution oracle for constant ratio regressions. Products
+// use checked uint512 arithmetic (enough for these cases) before division;
+// ordinary subtraction uses uint256 wrapping.
+fn constantRatio(bytes: []const u8) !u256 {
+    const instructions = try ms.bytecode.decode(std.testing.allocator, bytes);
+    defer std.testing.allocator.free(instructions);
+    var stack: [16]u256 = undefined;
+    var height: usize = 0;
+    for (instructions) |instruction| switch (instruction.op) {
+        .PUSH1, .PUSH8, .PUSH32, .PUSHDATA32 => {
+            stack[height] = ms.bytecode.word(instruction.immediate);
+            height += 1;
+        },
+        .DUP1 => {
+            stack[height] = stack[height - 1];
+            height += 1;
+        },
+        .SUB => {
+            stack[height - 2] -%= stack[height - 1];
+            height -= 1;
+        },
+        .RATIO => {
+            const count = instruction.immediate[0];
+            const mask = ms.bytecode.word(instruction.immediate[1..]);
+            var numerator: u512 = 1;
+            var denominator: u512 = 1;
+            for (stack[height - count .. height], 0..) |value, i| {
+                if ((mask >> @intCast(i)) & 1 == 0) numerator = try std.math.mul(u512, numerator, value) else denominator = try std.math.mul(u512, denominator, value);
+            }
+            height -= count;
+            stack[height] = @intCast(numerator / denominator);
+            height += 1;
+        },
+        .RETURN => break,
+        else => return error.UnsupportedTestInstruction,
+    };
+    try std.testing.expectEqual(@as(usize, 1), height);
+    return stack[0];
+}
+
+test "ratio identities preserve negative literal semantics in both modes" {
+    const cases = [_]struct { source: []const u8, expected: u256 }{
+        .{ .source = "$floor(-1 * 2 / 2)", .expected = std.math.maxInt(u256) },
+        .{ .source = "$floor((0 - 1) * 2 / 2)", .expected = std.math.maxInt(u256) },
+        .{ .source = "$floor(1 * 2 / 2)", .expected = 1 },
+        .{ .source = "$floor(1 * 2 / -1)", .expected = 0 },
+    };
+    for ([_]ms.Settings{ .{ .optimization = .baseline }, .{ .optimization = .size } }) |settings| {
+        for (cases) |case| {
+            const bytes = try ms.compile(std.testing.allocator, case.source, settings);
+            defer std.testing.allocator.free(bytes);
+            try std.testing.expectEqual(case.expected, try constantRatio(bytes));
+        }
+    }
 }
 
 test "Golden programs compile and round trip in both modes" {
@@ -121,12 +187,14 @@ test "reference extraction and compiler cap include discarded effects" {
 }
 
 test "compiler bounds operator chains, postfix trees and flat input" {
-    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
     for ([_][]const u8{
-        repeat("1&&", 40000) ++ "1",
-        repeat("1+", 15000) ++ "1",
-        "1" ++ repeat("[0]", 1000),
-        "{" ++ repeat("1,", 9000) ++ "1}",
+        try repeated(a, "", "1&&", 40000, "1"),
+        try repeated(a, "", "1+", 15000, "1"),
+        try repeated(a, "1", "[0]", 1000, ""),
+        try repeated(a, "{", "1,", 9000, "1}"),
     }) |source| try std.testing.expectError(error.ResourceLimit, ms.compile(a, source, .{}));
 }
 
@@ -134,12 +202,14 @@ test "ABI metadata bounds array dimensions before recursive layout" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const value = try std.json.parseFromSlice(std.json.Value, a, "{\"name\":\"f\",\"stateMutability\":\"view\",\"inputs\":[{\"type\":\"uint256" ++ repeat("[]", 20000) ++ "\"}]}", .{});
+    const value = try std.json.parseFromSlice(std.json.Value, a, try repeated(a, "{\"name\":\"f\",\"stateMutability\":\"view\",\"inputs\":[{\"type\":\"uint256", "[]", 20000, "\"}]}"), .{});
     try std.testing.expectError(error.InvalidDescriptor, ms.abi.method(a, value.value));
 }
 
 test "lowering bounds definition chains and compiler rewrite growth" {
-    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
     var source: std.Io.Writer.Allocating = .init(a);
     defer source.deinit();
     try source.writer.writeAll("let x0 = 1\n");
@@ -147,9 +217,30 @@ test "lowering bounds definition chains and compiler rewrite growth" {
     try source.writer.writeAll("in x999");
     try std.testing.expectError(error.ResourceLimit, ms.compile(a, source.written(), .{}));
     // Flat source can generate a deep chain of intermediate let bindings.
-    try std.testing.expectError(error.ResourceLimit, ms.compile(a, "{" ++ repeat("$read(1, 1),", 1500) ++ "1}", .{}));
+    try std.testing.expectError(error.ResourceLimit, ms.compile(a, try repeated(a, "{", "$read(1, 1),", 1500, "1}"), .{}));
     // Decompilation repeatedly substitutes prior expressions into this chain.
-    const bytes = try ms.bytecode.unhex(a, "0101" ++ repeat("010110", 2000) ++ "ff");
+    const bytes = try ms.bytecode.unhex(a, try repeated(a, "0101", "010110", 2000, "ff"));
     defer a.free(bytes);
     try std.testing.expectError(error.ResourceLimit, ms.decompile(a, bytes, .{}));
+}
+
+test "raw call frames obey shared authoring and reconstruction limits" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_]usize{ 255, 256, 257 }) |count| {
+        const items = try a.alloc([]const u8, count);
+        @memset(items, "1");
+        const values = try std.mem.join(a, ",", items);
+        for ([_][2][]const u8{ .{ "$read(1,1,{", "})" }, .{ "$read(1,1,{[", "]})" }, .{ "$calli(1,{", "})" } }) |parts| {
+            const source = try std.mem.concat(a, u8, &.{ parts[0], values, parts[1] });
+            if (count > 256) {
+                try std.testing.expectError(error.ResourceLimit, ms.compile(a, source, .{}));
+            } else {
+                const bytes = try ms.compile(a, source, .{});
+                const recovered = try ms.decompile(a, bytes, .{});
+                try std.testing.expectEqualSlices(u8, bytes, try ms.compile(a, recovered, .{}));
+            }
+        }
+    }
 }

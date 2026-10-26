@@ -125,8 +125,7 @@ pub fn synchronize(e: *sync.Engine, v: vault.Vault) !void {
         previous = null;
     };
     if (previous == null) try e.db.clear(e.scope, name);
-    const old_entries = try e.db.entries(e.scope, name);
-    var wanted: std.StringArrayHashMapUnmanaged(c.Value) = .empty;
+    const work = try @import("sync_queue.zig").Queue.init(e.db, name);
     var counts: std.json.ObjectMap = .empty;
     if (indexed) {
         const count_method = try e.cat.find("kv", "keyCountBySigner");
@@ -135,7 +134,7 @@ pub fn synchronize(e: *sync.Engine, v: vault.Vault) !void {
         for (secrets) |secret| try calls.append(e.a, .{ .method = count_method, .args = try abi.array(e.a, &.{.{ .string = try secret.address(e.a) }}) });
         const totals = try e.rpc.calls(calls.items);
         calls.clearRetainingCapacity();
-        var signers: std.ArrayList([]const u8) = .empty;
+
         for (secrets, totals) |secret, total| {
             const signer = try secret.address(e.a);
             const count = try rpc.integer(e.a, total.array.items[0]);
@@ -146,65 +145,70 @@ pub fn synchronize(e: *sync.Engine, v: vault.Vault) !void {
             };
             if (count - offset > 1_000_000) return error.IndexTooLarge;
             try counts.put(e.a, signer, try abi.uint(e.a, count));
-            while (offset < count) : (offset += @min(@as(u64, 256), count - offset)) {
-                try calls.append(e.a, .{ .method = page_method, .args = try abi.array(e.a, &.{ .{ .string = signer }, try abi.uint(e.a, offset), try abi.uint(e.a, @min(@as(u64, 256), count - offset)) }) });
-                try signers.append(e.a, signer);
-            }
-        }
-        for (try e.rpc.calls(calls.items), calls.items, signers.items) |page, call, signer| {
-            const keys = page.array.items[0].array.items;
-            if (keys.len != try c.number(e.a, call.args.array.items[2])) return error.ShortIndexPage;
-            for (keys, 0..) |key, index| {
-                const id = try c.string(key);
-                if (try c.word(id) == 0) return error.InvalidKvIndex;
-                if (!old_entries.contains(id)) try wanted.put(e.a, id, try c.parse(e.a, try c.encode(e.a, .{ .key = id, .signer = signer, .insertionIndex = try abi.uint(e.a, try c.number(e.a, call.args.array.items[1]) + index) })));
+            while (offset < count) {
+                var frame: sync.Frame = undefined;
+                frame.init(e);
+                defer frame.deinit();
+                const chunk = &frame.engine;
+                var queue = work;
+                queue.db = chunk.db;
+                const size = @min(@as(u64, 256), count - offset);
+                const page = try chunk.rpc.call(page_method, &.{ .{ .string = signer }, try abi.uint(chunk.a, offset), try abi.uint(chunk.a, size) });
+                const keys = page.array.items[0].array.items;
+                if (keys.len != size) return error.ShortIndexPage;
+                for (keys, 0..) |key, index| {
+                    const id = try c.string(key);
+                    if (try c.word(id) == 0) return error.InvalidKvIndex;
+                    if (!try chunk.db.contains(chunk.scope, name, id)) try queue.put(id, try c.parse(chunk.a, try c.encode(chunk.a, .{ .key = id, .signer = signer, .insertionIndex = try abi.uint(chunk.a, offset + index) })));
+                }
+                offset += size;
             }
         }
     } else {
         const from = try e.logStart(previous);
         const event = e.cat.event("Wrote") orelse return error.InvalidArtifact;
         const topic = try c.hex(e.a, ms.bytecode.hash(try contracts.signature(e.a, event, false)));
-        const logs = try e.explorer.logs(e.rpc.address, topic, from, e.rpc.block.number);
-        try e.rpc.verifyLogs(logs);
-        for (logs) |log| {
-            const topics = c.field(log, "topics").?.array.items;
-            if (topics.len != 3) return error.InvalidExplorerResponse;
-            const key = try c.string(topics[1]);
-            const signer = try e.a.print("0x{x:0>40}", .{@as(u160, @truncate(try c.number(e.a, topics[2])))});
-            if (!old_entries.contains(key)) try wanted.put(e.a, key, try c.parse(e.a, try c.encode(e.a, .{ .key = key, .signer = signer, .blockNumber = c.field(log, "blockNumber").?, .transactionHash = c.field(log, "transactionHash").?, .logIndex = c.field(log, "logIndex").? })));
-        }
+        try e.collectLogs(work, topic, from, .kv);
     }
     const method = try e.cat.find("kv", "read");
-    var calls: std.ArrayList(rpc.Call) = .empty;
-    for (wanted.keys()) |key| try calls.append(e.a, .{ .method = method, .args = try abi.array(e.a, &.{.{ .string = key }}) });
-    for (try e.rpc.calls(calls.items), wanted.keys(), wanted.values()) |value, key, meta| {
-        var record = meta;
-        // Preserve the onchain ciphertext verbatim. Proposals are decoded in memory
-        // only after a passphrase unlock, including for offline list commands.
-        try record.object.put(e.a, "value", value.array.items[0]);
-        try e.db.put(e.scope, name, key, record);
-    }
-    if (indexed and wanted.count() > 0) {
-        calls.clearRetainingCapacity();
-        const id_method = try e.cat.find("kv", "keyId");
-        for (wanted.keys()) |key| try calls.append(e.a, .{ .method = id_method, .args = try abi.array(e.a, &.{.{ .string = key }}) });
-        const ids = try e.rpc.calls(calls.items);
-        calls.clearRetainingCapacity();
-        const info_method = try e.cat.find("kv", "keyInfo");
-        for (ids) |id| {
-            if (!id.array.items[1].bool) return error.InvalidKvIndex;
-            try calls.append(e.a, .{ .method = info_method, .args = try abi.array(e.a, &.{id.array.items[0]}) });
+    while (true) {
+        var frame: sync.Frame = undefined;
+        frame.init(e);
+        defer frame.deinit();
+        const chunk = &frame.engine;
+        var queue = work;
+        queue.db = chunk.db;
+        const pending = try queue.page(256);
+        if (pending.len == 0) break;
+        var calls: [256]rpc.Call = undefined;
+        for (pending, 0..) |entry, i| calls[i] = .{ .method = method, .args = try abi.array(chunk.a, &.{.{ .string = entry.id }}) };
+        const values = try chunk.rpc.calls(calls[0..pending.len]);
+        var infos: []const c.Value = &.{};
+        if (indexed) {
+            const id_method = try chunk.cat.find("kv", "keyId");
+            for (pending, 0..) |entry, i| calls[i] = .{ .method = id_method, .args = try abi.array(chunk.a, &.{.{ .string = entry.id }}) };
+            const ids = try chunk.rpc.calls(calls[0..pending.len]);
+            const info_method = try chunk.cat.find("kv", "keyInfo");
+            for (ids, 0..) |id, i| {
+                if (!id.array.items[1].bool) return error.InvalidKvIndex;
+                calls[i] = .{ .method = info_method, .args = try abi.array(chunk.a, &.{id.array.items[0]}) };
+            }
+            infos = try chunk.rpc.calls(calls[0..pending.len]);
         }
-        const records = try e.db.entries(e.scope, name);
-        for (try e.rpc.calls(calls.items), wanted.keys()) |info, key| {
-            const fields = info.array.items;
-            var record = records.get(key).?;
-            if (!fields[1].bool or !std.ascii.eqlIgnoreCase(try c.string(fields[0]), key) or !std.ascii.eqlIgnoreCase(try c.string(fields[3]), try c.string(c.field(record, "signer").?))) return error.InvalidKvIndex;
-            try record.object.put(e.a, "blockNumber", fields[2]);
-            try e.db.put(e.scope, name, key, record);
+        for (pending, values, 0..) |entry, value, i| {
+            var record = entry.value;
+            try record.object.put(chunk.a, "value", value.array.items[0]);
+            if (indexed) {
+                const fields = infos[i].array.items;
+                if (!fields[1].bool or !std.ascii.eqlIgnoreCase(try c.string(fields[0]), entry.id) or !std.ascii.eqlIgnoreCase(try c.string(fields[3]), try c.string(c.field(record, "signer").?))) return error.InvalidKvIndex;
+                try record.object.put(chunk.a, "blockNumber", fields[2]);
+            }
+            try chunk.db.put(chunk.scope, name, entry.id, record);
+            try queue.remove(entry.id);
         }
+        try chunk.note(name, pending.len);
     }
-    try e.save(name, if (indexed) "signer-key-index" else "etherscan", .{ .counts = c.Value{ .object = counts }, .fromBlock = e.from_block, .orderVersion = 1 });
+    try e.save(name, if (indexed) "signer-key-index" else e.last_log_source, .{ .counts = c.Value{ .object = counts }, .fromBlock = e.from_block, .orderVersion = 1 });
 }
 
 pub const Listing = struct { entries: []c.Value, unreadable: usize, invalid: usize };
@@ -251,16 +255,7 @@ pub fn listView(a: c.A, entries: std.StringArrayHashMapUnmanaged(c.Value), secre
         for ([_][]const u8{ "blockNumber", "transactionHash", "logIndex", "insertionIndex" }) |field| if (c.field(raw, field)) |value| try record.object.put(a, field, value);
         try records.append(a, record);
     }
-    std.mem.sort(c.Value, records.items, a, struct {
-        fn less(allocator: c.A, left: c.Value, right: c.Value) bool {
-            for ([_][]const u8{ "createdAt", "blockNumber", "logIndex" }) |field| {
-                const l = c.number(allocator, c.field(if (c.eq(u8, field, "createdAt")) c.field(left, "payload").? else left, field) orelse .{ .string = "0" }) catch 0;
-                const r = c.number(allocator, c.field(if (c.eq(u8, field, "createdAt")) c.field(right, "payload").? else right, field) orelse .{ .string = "0" }) catch 0;
-                if (l != r) return l > r;
-            }
-            return std.mem.lessThan(u8, c.string(c.field(right, "key").?) catch "", c.string(c.field(left, "key").?) catch "");
-        }
-    }.less);
+    sort(a, records.items);
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     var result: std.ArrayList(c.Value) = .empty;
     for (records.items) |record| {
@@ -270,6 +265,24 @@ pub fn listView(a: c.A, entries: std.StringArrayHashMapUnmanaged(c.Value), secre
         try result.append(a, record);
     }
     return .{ .entries = result.items, .unreadable = unreadable, .invalid = invalid };
+}
+
+pub fn sort(a: c.A, entries: []c.Value) void {
+    std.mem.sort(c.Value, entries, a, struct {
+        fn less(allocator: c.A, left: c.Value, right: c.Value) bool {
+            for ([_][]const u8{ "createdAt", "blockNumber", "logIndex" }) |field| {
+                const l = c.number(allocator, c.field(if (c.eq(u8, field, "createdAt")) c.field(left, "payload").? else left, field) orelse .{ .string = "0" }) catch 0;
+                const r = c.number(allocator, c.field(if (c.eq(u8, field, "createdAt")) c.field(right, "payload").? else right, field) orelse .{ .string = "0" }) catch 0;
+                if (l != r) return l > r;
+            }
+            for ([_][]const u8{ "pendingId", "key" }) |name| {
+                const l = c.string(c.field(left, name) orelse .null) catch "";
+                const r = c.string(c.field(right, name) orelse .null) catch "";
+                if (!c.eq(u8, l, r)) return std.mem.lessThan(u8, r, l);
+            }
+            return false;
+        }
+    }.less);
 }
 
 /// Status is checked only against an explicitly selected, verified Interact

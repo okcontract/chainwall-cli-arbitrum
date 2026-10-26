@@ -124,6 +124,10 @@
       "name": "$balance",
       "kind": "function",
       "signature": "$balance(owner) / $balance(token, owner)",
+      "overloads": [
+        { "label": "$balance(owner)", "parameters": [{ "label": "owner" }] },
+        { "label": "$balance(token, owner)", "parameters": [{ "label": "token" }, { "label": "owner" }] }
+      ],
       "doc": "Reads native balance for an owner or ERC20 balanceOf(owner) for a token."
     },
     {

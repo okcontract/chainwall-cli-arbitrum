@@ -34,16 +34,16 @@ pub fn typed(a: c.A, payload: c.Value, actor: []const u8, forwarder: []const u8,
 pub fn run(client: Client, registry: []const u8, args: *Args, file: []const u8, verb: []const u8, dry: bool) !c.Value {
     const cast = client.cast;
     const a = cast.a;
-    const mode = args.get("via") orelse "account";
-    if (!@import("schema.zig").contains("account safe module", mode)) return error.InvalidExecutionMode;
-    const is_module = c.eq(u8, mode, "module");
-    const is_safe = !c.eq(u8, mode, "account");
-    const actor_option = args.get("actor");
-    const actor_file = args.get("actor-signature-file");
-    const signatures_file = args.get("signatures-file");
-    const reveal_file = args.get("reveal-file");
-    const out = args.get("out");
-    const max_steps = try abi.uint(a, try c.word(args.get("max-steps") orelse "100000"));
+    const options = try @import("command_options.zig").Operation.parse(args, true);
+    const mode = @tagName(cast.route);
+    const is_module = cast.route == .module;
+    const is_safe = cast.route != .account;
+    const actor_option = options.actor;
+    const actor_file = options.actor_file;
+    const signatures_file = options.signatures_file;
+    const reveal_file = options.reveal_file;
+    const out = options.out;
+    const max_steps = try abi.uint(a, options.max_steps);
     const sign_actor = c.eq(u8, verb, "direct-sign-actor");
     const sign_safe = c.eq(u8, verb, "direct-sign");
     const bundled = is_module and modules.bundled(cast) and !sign_actor;

@@ -15,7 +15,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -24,7 +24,31 @@ jobs:
       - run: zig fmt --check build.zig build.zig.zon src test
       - run: zig build -Doptimize=safe
       - run: zig build test
+      - run: zig build test -Doptimize=safe
+      - name: Neovim integration
+        if: runner.os == 'Linux'
+        run: |
+          curl -fL --retry 3 https://github.com/neovim/neovim/releases/download/v0.11.5/nvim-linux-x86_64.tar.gz -o "$RUNNER_TEMP/chainwall-nvim.tar.gz"
+          tar -xzf "$RUNNER_TEMP/chainwall-nvim.tar.gz" -C "$RUNNER_TEMP"
+          zig build test-editor -Dneovim="$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim"
+      - run: zig build smoke -Doptimize=safe --prefix zig-out/smoke
+      - run: zig build smoke -Dcli=false -Dlsp=false --prefix zig-out/compiler-only
+      - run: zig build test-package
+      - run: zig build package -Doptimize=safe --prefix zig-out/release
       - run: |
-          zig-out/bin/chainwall --version
-          zig-out/bin/chainwall-lsp --version
-          printf '%s' '$arg0 + 1' | zig-out/bin/miniscript compile
+          mkdir -p zig-out/unpacked
+          tar -xzf zig-out/release/packages/*.tar.gz -C zig-out/unpacked
+          zig-out/unpacked/bin/chainwall --version
+          zig-out/unpacked/bin/chainwall-lsp --version
+  cross-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        target: [x86_64-linux-musl, aarch64-linux-musl]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.17.0
+      - run: zig build package -Dtarget=${{ matrix.target }} -Doptimize=safe

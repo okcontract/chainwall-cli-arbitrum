@@ -111,26 +111,35 @@ pub fn verify(client: Client, value: c.Value) !c.Value {
     return share;
 }
 
-fn key(a: c.A, chain: u64, registry: []const u8) ![]const u8 {
+pub fn key(a: c.A, chain: u64, registry: []const u8) ![]const u8 {
     return a.print("private-operations:{s}", .{try @import("store.zig").scopeKey(a, chain, registry)});
 }
 pub fn load(a: c.A, v: Vault, chain: u64, registry: []const u8) !c.Value {
-    const bytes = (try v.get(try key(a, chain, registry))) orelse return .{ .object = .empty };
+    const scope = try key(a, chain, registry);
+    const bytes = (try v.get(scope)) orelse return @import("sealed_records.zig").load(v, scope);
     defer std.crypto.secureZero(u8, bytes);
     const value = try c.parse(a, bytes);
     if (value != .object) return error.InvalidVault;
     return value;
+}
+/// One-time migration of the legacy encrypted map, inside the caller's write
+/// transaction. Subsequent imports and syncs allocate at most one page.
+pub fn migrate(v: Vault, scope: []const u8) !void {
+    const bytes = (try v.get(scope)) orelse return;
+    defer std.crypto.secureZero(u8, bytes);
+    const old = try c.parse(v.a, bytes);
+    if (old != .object) return error.InvalidVault;
+    for (old.object.keys(), old.object.values()) |id, value| try @import("sealed_records.zig").put(v, scope, id, value);
+    try v.db.db.exec("DELETE FROM vault WHERE id=?", .{scope});
 }
 pub fn save(a: c.A, v: Vault, chain: u64, registry: []const u8, share: c.Value) ![]const u8 {
     const record = try operations.proposal(a, try operations.encodeProposal(a, try field(share, "payload")));
     const id = try c.string(try field(record, "pendingId"));
     try v.db.begin();
     errdefer v.db.db.rollback();
-    var values = try load(a, v, chain, registry);
-    try values.object.put(a, id, share);
-    const bytes = try c.encode(a, values);
-    defer std.crypto.secureZero(u8, @constCast(bytes));
-    try v.put(try key(a, chain, registry), bytes);
+    const scope = try key(a, chain, registry);
+    try migrate(v, scope);
+    try @import("sealed_records.zig").put(v, scope, id, share);
     try v.db.db.commit();
     return id;
 }
@@ -153,5 +162,28 @@ pub fn merge(a: c.A, listing: operations.Listing, v: Vault, chain: u64, registry
         try record.object.put(a, "proposalTxHash", try field(share, "proposalTxHash"));
         try records.append(a, record);
     }
+    operations.sort(a, records.items);
     return .{ .entries = records.items, .invalid = listing.invalid, .unreadable = listing.unreadable };
+}
+
+test "merged operations are deduplicated and sorted newest first before pagination" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const db = try @import("store.zig").Store.init(a, ":memory:");
+    defer db.close();
+    const v: Vault = .{ .a = a, .io = std.testing.io, .key = @splat(7), .db = db };
+    const address = "0x1111111111111111111111111111111111111111";
+    var journal: c.Value = undefined;
+    for ([_]u64{ 100, 200, 50 }) |time| {
+        const payload = try c.parse(a, try c.encode(a, .{ .version = 2, .safe = address, .creator = address, .chainId = 42161, .interactionId = try c.hex(a, 1), .policyId = try c.hex(a, 2), .executionBindingHash = try c.hex(a, 3), .args = [_]u64{}, .nativeValue = 0, .operationId = time, .payloadHash = try c.hex(a, 4), .deadline = 1000, .createdAt = time }));
+        _ = try save(a, v, 42161, address, try c.parse(a, try c.encode(a, .{ .payload = payload, .proposalTxHash = try c.hex(a, time) })));
+        if (time == 100) journal = try operations.proposal(a, try operations.encodeProposal(a, payload));
+    }
+    var journal_entries = [_]c.Value{journal};
+    const listing = try merge(a, .{ .entries = &journal_entries, .invalid = 0, .unreadable = 0 }, v, 42161, address, null);
+    try std.testing.expectEqual(@as(usize, 3), listing.entries.len);
+    for (listing.entries, [_]u256{ 200, 100, 50 }) |record, time| try std.testing.expectEqual(time, try c.number(a, try field(try field(record, "payload"), "createdAt")));
+    const local = try merge(a, .{ .entries = &.{}, .invalid = 0, .unreadable = 0 }, v, 42161, address, null);
+    for (local.entries, listing.entries) |left, right| try std.testing.expectEqualStrings(try c.string(try field(left, "pendingId")), try c.string(try field(right, "pendingId")));
 }

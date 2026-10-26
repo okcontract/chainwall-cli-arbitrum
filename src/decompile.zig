@@ -20,7 +20,7 @@ pub const Decoder = struct {
         return @intCast(node.value);
     }
     fn push(d: *Decoder, region: *Region, node: *Node) Error!void {
-        if (region.stack.items.len >= 1024) return error.StackCapacity;
+        if (region.stack.items.len >= t.limits.stack_words) return error.StackCapacity;
         if (t.atomic(node)) return region.stack.append(d.f.a, node);
         const local = try d.f.named(.local, try d.f.fresh("shared"), &.{});
         local.result = t.resultType(node);
@@ -83,7 +83,7 @@ pub const Decoder = struct {
             if (n.tag != .constant) return error.InvalidBytecode;
             break :blk n.value;
         } else 0;
-        const count = try d.literal(try d.pop(region), 256);
+        const count = try d.literal(try d.pop(region), t.limits.raw_arguments);
         const selector = try d.pop(region);
         const target = try d.pop(region);
         const arguments = try d.f.a.alloc([]*Node, count);
@@ -91,7 +91,7 @@ pub const Decoder = struct {
         for (0..count) |step| {
             const i = if (forward) count - 1 - step else step;
             const array = (mask >> @intCast(i)) & 1 != 0;
-            const length = if (array) try d.literal(try d.pop(region), 256) else 1;
+            const length = if (array) try d.literal(try d.pop(region), t.limits.raw_array_elements) else 1;
             groups[i] = .{ .count = length, .array = array };
             arguments[i] = try d.f.a.alloc(*Node, length);
             var j = length;
@@ -153,7 +153,7 @@ pub const Decoder = struct {
         return node;
     }
     fn segment(d: *Decoder, start: usize, end: usize, incoming: []const *Node, depth: usize) Error!Region {
-        if (depth > 256) return error.ResourceLimit;
+        if (depth > t.limits.syntax_depth) return error.ResourceLimit;
         var region: Region = .{};
         try region.stack.appendSlice(d.f.a, incoming);
         var pc = start;
@@ -274,7 +274,7 @@ pub const Decoder = struct {
                     }
                 },
                 .CALLI => {
-                    const count = try d.literal(try d.pop(&region), 256);
+                    const count = try d.literal(try d.pop(&region), t.limits.calli_arguments);
                     const id = try d.pop(&region);
                     const children = try d.f.a.alloc(*Node, count + 1);
                     children[0] = id;
@@ -375,7 +375,7 @@ pub const Printer = struct {
             .tuple, .fixed_array, .dynamic_array => {
                 var length: usize = if (schema.kind == .tuple) schema.children.len else schema.length;
                 if (schema.kind == .dynamic_array) {
-                    if (cursor.* >= tape.len or tape[cursor.*].tag != .constant or tape[cursor.*].value > 256) return error.Unsupported;
+                    if (cursor.* >= tape.len or tape[cursor.*].tag != .constant or tape[cursor.*].value > t.limits.abi_array_elements) return error.Unsupported;
                     length = @intCast(tape[cursor.*].value);
                     cursor.* += 1;
                 }
@@ -387,7 +387,7 @@ pub const Printer = struct {
                 try p.write(if (schema.kind == .tuple) "}" else "]");
             },
             .dynamic_bytes => {
-                if (cursor.* >= tape.len or tape[cursor.*].tag != .constant or tape[cursor.*].value > 8192) return error.Unsupported;
+                if (cursor.* >= tape.len or tape[cursor.*].tag != .constant or tape[cursor.*].value > t.limits.abi_dynamic_bytes) return error.Unsupported;
                 const length: usize = @intCast(tape[cursor.*].value);
                 cursor.* += 1;
                 const words = (length + 31) / 32;

@@ -86,6 +86,32 @@ pub const Store = struct {
     pub fn remove(s: Store, scope: []const u8, dataset: []const u8, id: []const u8) !void {
         try s.db.exec("DELETE FROM entries WHERE scope=? AND dataset=? AND id=?", .{ scope, dataset, id });
     }
+    /// Returns a caller-allocator-owned decoded record, without loading its peers.
+    pub fn get(s: Store, scope: []const u8, dataset: []const u8, id: []const u8) !?c.Value {
+        var row = (try s.db.row("SELECT value FROM entries WHERE scope=? AND dataset=? AND id=?", .{ scope, dataset, id })) orelse return null;
+        defer row.deinit();
+        return try c.parse(s.a, row.text(0));
+    }
+    pub fn contains(s: Store, scope: []const u8, dataset: []const u8, id: []const u8) !bool {
+        var row = (try s.db.row("SELECT 1 FROM entries WHERE scope=? AND dataset=? AND id=?", .{ scope, dataset, id })) orelse return false;
+        defer row.deinit();
+        return true;
+    }
+    pub const Entry = struct { id: []const u8, value: c.Value };
+    pub const Scan = struct { entries: []const Entry, next: ?[]const u8 };
+    /// Keyset traversal. Cursors are exclusive IDs; callers retain their scope.
+    pub fn scan(s: Store, scope: []const u8, dataset: []const u8, after: ?[]const u8, count: u32) !Scan {
+        if (count == 0 or count > 1000) return error.PageTooLarge;
+        var rows = if (after) |cursor| try s.db.rows("SELECT id,value FROM entries WHERE scope=? AND dataset=? AND id>? ORDER BY id LIMIT ?", .{ scope, dataset, cursor, @as(i64, count) + 1 }) else try s.db.rows("SELECT id,value FROM entries WHERE scope=? AND dataset=? ORDER BY id LIMIT ?", .{ scope, dataset, @as(i64, count) + 1 });
+        defer rows.deinit();
+        var entries_: std.ArrayList(Entry) = .empty;
+        while (rows.next()) |row| {
+            if (entries_.items.len == count) return .{ .entries = entries_.items, .next = entries_.items[entries_.items.len - 1].id };
+            try entries_.append(s.a, .{ .id = try s.a.dupe(u8, row.text(0)), .value = try c.parse(s.a, row.text(1)) });
+        }
+        if (rows.err) |err| return err;
+        return .{ .entries = entries_.items, .next = null };
+    }
     pub fn entries(s: Store, scope: []const u8, dataset: []const u8) !std.StringArrayHashMapUnmanaged(c.Value) {
         var rows = try s.db.rows("SELECT id,value FROM entries WHERE scope=? AND dataset=? ORDER BY id", .{ scope, dataset });
         defer rows.deinit();
@@ -94,7 +120,8 @@ pub const Store = struct {
         if (rows.err) |err| return err;
         return result;
     }
-    pub fn page(s: Store, scope: []const u8, dataset: []const u8, start: u64, count: u64) !struct { total: i64, values: []const c.Value } {
+    pub const Page = struct { total: i64, values: []const c.Value };
+    pub fn page(s: Store, scope: []const u8, dataset: []const u8, start: u64, count: u64) !Page {
         var total = (try s.db.row("SELECT count(*) FROM entries WHERE scope=? AND dataset=?", .{ scope, dataset })).?;
         defer total.deinit();
         var rows = try s.db.rows("SELECT value FROM entries WHERE scope=? AND dataset=? ORDER BY id LIMIT ? OFFSET ?", .{ scope, dataset, @as(i64, @intCast(@min(count, std.math.maxInt(i64)))), @as(i64, @intCast(@min(start, std.math.maxInt(i64)))) });
@@ -150,4 +177,26 @@ test "failed SQLite opens release native allocations" {
     const before = sql.c.sqlite3_memory_used();
     for (0..1000) |_| try std.testing.expectError(error.DatabaseOpenFailed, openConnection(path, flags));
     try std.testing.expectEqual(before, sql.c.sqlite3_memory_used());
+}
+
+test "point queries isolate scopes and keyset pages survive deletion before the cursor" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const db = try Store.init(a, ":memory:");
+    defer db.close();
+    for (0..31) |i| try db.put("one", "journal", try a.print("{d:0>3}", .{i}), .{ .string = "entry" });
+    try db.put("two", "journal", "001", .{ .string = "other" });
+    try std.testing.expectEqualStrings("entry", try c.string((try db.get("one", "journal", "001")).?));
+    try std.testing.expectEqualStrings("other", try c.string((try db.get("two", "journal", "001")).?));
+    try std.testing.expect((try db.get("one", "missing", "001")) == null);
+    const first = try db.scan("one", "journal", null, 10);
+    try std.testing.expectEqualStrings("009", first.next.?);
+    try db.remove("one", "journal", "000");
+    const second = try db.scan("one", "journal", first.next, 10);
+    try std.testing.expectEqualStrings("010", second.entries[0].id);
+    const last = try db.scan("one", "journal", second.next, 100);
+    try std.testing.expectEqual(@as(usize, 11), last.entries.len);
+    try std.testing.expect(last.next == null);
+    try std.testing.expectError(error.PageTooLarge, db.scan("one", "journal", null, 1001));
 }

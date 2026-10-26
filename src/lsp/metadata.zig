@@ -323,12 +323,12 @@ pub fn refresh(a: c.A, io: std.Io, env: *const std.process.Environ.Map, selectio
     if (try c.number(a, component) != ms.bytecode.hash("Chainwall.Registry")) return error.NotAChainwallRegistry;
     const db = try storage.Store.open(a, io, selection.dir);
     defer db.close();
-    try db.begin();
-    errdefer db.db.rollback();
-    var engine: sync.Engine = .{ .a = a, .db = db, .rpc = &client, .cat = cat, .scope = try storage.scopeKey(a, selection.chain, selection.instance), .explorer = selection.explorer(a, io, env) };
+    var staged = try @import("../cli/staging.zig").Stage.open(db, io, selection.dir);
+    defer staged.deinit();
+    var engine: sync.Engine = .{ .a = a, .db = staged.db, .rpc = &client, .cat = cat, .scope = try storage.scopeKey(a, selection.chain, selection.instance), .explorer = selection.explorer(a, io, env) };
     for (sync.datasets) |dataset| try engine.registry(dataset);
     if (!try client.canonical(client.block)) return error.ChainReorganizedRetrySync;
-    try db.db.commit();
+    try staged.commit();
     return p.json(a, .{ .chainId = selection.chain, .instance = selection.instance, .block = client.block, .rpcRequests = client.requests });
 }
 
@@ -349,4 +349,18 @@ test "credential directory uses startup paths and cannot enter LSP options" {
     try std.testing.expectEqualStrings("/absolute", try configDirectory(a, &env, "/startup", "/absolute"));
     for ([_][]const u8{ "{\"configDir\":null}", "{\"configDir\":\"profiles\"}", "{\"configDir\":\"/repo/profiles\"}" }) |input|
         try std.testing.expectError(error.ConfigDirectoryRequiresStartupOption, merge(a, .null, try c.parse(a, input)));
+}
+
+test "nested LSP compiler settings share strict library validation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    var env = std.process.Environ.Map.init(a);
+    defer env.deinit();
+    for ([_][]const u8{ "{\"settings\":{\"optimisation\":\"size\"}}", "{\"settings\":{\"settings\":{\"optimisation\":\"size\"}}}" }) |input| {
+        try std.testing.expectError(error.InvalidSettings, Selection.resolve(a, std.testing.io, &env, dir, try c.parse(a, input), dir));
+    }
 }

@@ -39,15 +39,22 @@ pub const Lowerer = struct {
         return null;
     }
     fn count(l: *Lowerer, n: *Node, locals: ?*const Env) Error!void {
-        if (l.depth >= 256) return error.ResourceLimit;
+        errdefer if (l.f.diagnostic) |d| d.locate(n.span);
+        if (l.depth >= t.limits.lowering_depth) return error.ResourceLimit;
         l.depth += 1;
         defer l.depth -= 1;
         if (n.tag == .variable and Env.get(locals, n.name) == null) {
             if (l.lookup(n.name)) |i| {
                 const d = &l.definitions[i];
                 d.count += 1;
-                if (d.count > 100000) return error.ResourceLimit;
-                if (d.visiting) return error.CyclicDefinition;
+                if (d.count > t.limits.dependency_visits) return error.ResourceLimit;
+                if (d.visiting) {
+                    if (l.f.diagnostic) |diagnostic| {
+                        diagnostic.record(n.span, error.CyclicDefinition);
+                        diagnostic.related = d.binding.name_span;
+                    }
+                    return error.CyclicDefinition;
+                }
                 d.visiting = true;
                 try l.count(d.binding.value, null);
                 d.visiting = false;
@@ -69,7 +76,7 @@ pub const Lowerer = struct {
         }
     }
     fn astEffect(l: *Lowerer, n: *Node, depth: usize) Error!bool {
-        if (depth > 256) return error.CyclicDefinition;
+        if (depth > t.limits.resolution_depth) return error.CyclicDefinition;
         if (n.tag == .variable) {
             if (std.mem.startsWith(u8, n.name, "$subject")) return true;
             if (l.lookup(n.name)) |i| return l.astEffect(l.definitions[i].binding.value, depth + 1);
@@ -97,7 +104,7 @@ pub const Lowerer = struct {
         return value;
     }
     fn expand(l: *Lowerer, n: *Node, env: ?*const Env, depth: usize) Error!*Node {
-        if (depth > 256) return error.CyclicDefinition;
+        if (depth > t.limits.resolution_depth) return error.CyclicDefinition;
         if (n.tag == .variable) {
             if (Env.get(env, n.name)) |v| return v;
             if (l.lookup(n.name)) |i| {
@@ -108,6 +115,7 @@ pub const Lowerer = struct {
         return n;
     }
     fn literal(l: *Lowerer, node: *Node, env: ?*const Env, hashed: bool) Error!u256 {
+        errdefer if (l.f.diagnostic) |d| d.locate(node.span);
         const n = try l.expand(node, env, 0);
         if (n.tag == .application and (t.same(n.name, "$address") or t.same(n.name, "$__resolved")) and n.children.len == 1) return l.literal(n.children[0], env, true);
         if (n.tag == .string and hashed) return bc.hash(n.name);
@@ -115,7 +123,7 @@ pub const Lowerer = struct {
         return n.value;
     }
     fn sequence(l: *Lowerer, nodes: []const *Node, env: ?*const Env) Error!*Node {
-        if (l.depth >= 256) return error.ResourceLimit;
+        if (l.depth >= t.limits.lowering_depth) return error.ResourceLimit;
         l.depth += 1;
         defer l.depth -= 1;
         if (nodes.len == 0) return l.f.num(0);
@@ -139,7 +147,11 @@ pub const Lowerer = struct {
         return l.f.sequence(items.items);
     }
     pub fn expr(l: *Lowerer, n: *Node, env: ?*const Env, target: bool) Error!*Node {
-        if (l.depth >= 256) return error.ResourceLimit;
+        const origin = l.f.origin;
+        l.f.origin = n.span;
+        defer l.f.origin = origin;
+        errdefer if (l.f.diagnostic) |d| d.locate(n.span);
+        if (l.depth >= t.limits.lowering_depth) return error.ResourceLimit;
         l.depth += 1;
         defer l.depth -= 1;
         switch (n.tag) {
@@ -203,7 +215,7 @@ pub const Lowerer = struct {
         }
         if (factors.items.len >= 17) return error.InvalidArguments;
         if (inverted) {
-            if (factors.items.len >= 16) return error.InvalidArguments;
+            if (factors.items.len >= t.limits.ratio_factors) return error.InvalidArguments;
             mask.* |= @as(u16, 1) << @intCast(factors.items.len);
         }
         try factors.append(l.f.a, n);
@@ -232,11 +244,11 @@ pub const Lowerer = struct {
             var factors: std.ArrayList(*Node) = .empty;
             var mask: u16 = 0;
             if (!try l.collectRatio(args[0], env, false, &factors, &mask)) return l.expr(args[0], env, false);
-            if (factors.items.len > 2 and mask & 1 == 0 and factors.items[0].tag == .number and factors.items[0].value == 1 and mask != (@as(u32, 1) << @intCast(factors.items.len)) - 2) {
+            if (factors.items.len > 2 and mask & 1 == 0 and factors.items[0].tag == .number and !factors.items[0].negative and factors.items[0].value == 1 and mask != (@as(u32, 1) << @intCast(factors.items.len)) - 2) {
                 _ = factors.orderedRemove(0);
                 mask >>= 1;
             }
-            if (factors.items.len < 2 or factors.items.len > 16) return error.InvalidArguments;
+            if (factors.items.len < 2 or factors.items.len > t.limits.ratio_factors) return error.InvalidArguments;
             for (factors.items) |*c| c.* = try l.expr(c.*, env, false);
             const out = try l.f.node(.ratio, factors.items);
             out.mask = mask;
@@ -263,6 +275,7 @@ pub const Lowerer = struct {
             const id = try l.literal(args[0], env, false);
             const tuple = if (args.len == 2) try l.expand(args[1], env, 0) else try l.f.node(.tuple, &.{});
             if (tuple.tag != .tuple or hasDeclaration(tuple)) return error.InvalidArguments;
+            if (tuple.children.len > t.limits.calli_arguments) return error.ResourceLimit;
             var children: std.ArrayList(*Node) = .empty;
             try children.append(l.f.a, try l.f.num(id));
             for (tuple.children) |c| {
@@ -342,6 +355,7 @@ pub const Lowerer = struct {
         if (method_value) |v| return l.recursiveCall(n, env, target, selector, tuple, try abi.method(l.f.a, v));
         if (l.settings.forceRecursiveAbi or read_words) return error.InvalidSettings;
         if ((tuple.tag != .tuple and !(write and tuple.tag == .object)) or hasDeclaration(tuple)) return error.InvalidArguments;
+        if (tuple.children.len > t.limits.raw_arguments) return error.ResourceLimit;
         var children: std.ArrayList(*Node) = .empty;
         try children.appendSlice(l.f.a, &.{ try l.f.node(.target, &.{target}), selector });
         var groups: std.ArrayList(t.Arg) = .empty;
@@ -349,6 +363,7 @@ pub const Lowerer = struct {
             const arg = try l.expand(arg_, env, 0);
             const resolution = if (write) try l.addressHint(target, selector, index) else "";
             if (arg.tag == .list) {
+                if (arg.children.len > t.limits.raw_array_elements) return error.ResourceLimit;
                 try groups.append(l.f.a, .{ .count = arg.children.len, .array = true });
                 for (arg.children) |c| {
                     const value = try l.expr(c, env, false);
@@ -401,7 +416,7 @@ pub const Lowerer = struct {
     }
     fn lowerValue(l: *Lowerer, raw: *Node, schema: *abi.Schema, env: ?*const Env, tape: *Tape) Error!void {
         tape.visits += 1;
-        if (tape.visits > 4096) return error.ResourceLimit;
+        if (tape.visits > t.limits.abi_plan_visits) return error.ResourceLimit;
         const node = try l.expand(raw, env, 0);
         switch (schema.kind) {
             .tuple => {
@@ -409,14 +424,14 @@ pub const Lowerer = struct {
                 for (node.children, schema.children) |c, child_schema| try l.lowerValue(c, child_schema, env, tape);
             },
             .fixed_array, .dynamic_array => {
-                if (node.tag != .list or node.children.len > 256 or (schema.kind == .fixed_array and node.children.len != schema.length)) return error.InvalidArguments;
+                if (node.tag != .list or node.children.len > t.limits.abi_array_elements or (schema.kind == .fixed_array and node.children.len != schema.length)) return error.InvalidArguments;
                 if (schema.kind == .dynamic_array) try l.tapeWord(tape, try l.f.num(node.children.len), .{ .tag = 0x80, .exact = @intCast(node.children.len) });
                 for (node.children) |c| try l.lowerValue(c, schema.children[0], env, tape);
             },
             .dynamic_bytes => {
                 if (node.tag != .string) return error.InvalidArguments;
                 const bytes = if (schema.string) node.name else try bc.unhex(l.f.a, node.name);
-                if (bytes.len > 8192 or (!schema.string and !std.mem.startsWith(u8, node.name, "0x"))) return error.InvalidArguments;
+                if (bytes.len > t.limits.abi_dynamic_bytes or (!schema.string and !std.mem.startsWith(u8, node.name, "0x"))) return error.InvalidArguments;
                 try l.tapeWord(tape, try l.f.num(bytes.len), .{ .tag = 0x80, .exact = @intCast(bytes.len) });
                 var offset: usize = 0;
                 while (offset < bytes.len) : (offset += 32) {

@@ -298,9 +298,10 @@ pub fn importSafe(factory: Client, registry: []const u8, address: []const u8, ar
     const data = try configurator.data(if (preserve or with_options) "configureWithExtensionPolicy" else "configure", config_values.items);
     const configurator_address = configurator_cast.instance;
     const tx_values = [_]c.Value{ .{ .string = configurator_address }, try abi.uint(a, 0), .{ .string = data }, try abi.uint(a, 1), try abi.uint(a, 0), try abi.uint(a, 0), try abi.uint(a, 0), .{ .string = zero }, .{ .string = zero }, try field(inspected, "nonce") };
+    if (out) |path| try c.write(cast.io, path, try c.encode(a, .{ .state = "prepared", .inspection = inspected, .transaction = tx_values }), false);
     if (signing) {
         const result = try safe_tx.sign(safe, &tx_values, dry);
-        if (out) |path| try c.write(cast.io, path, try c.encode(a, result), false);
+        if (out) |path| try c.write(cast.io, path, try c.encode(a, result), true);
         return result;
     }
     const hash = try safe.first("getTransactionHash", &tx_values);
@@ -308,10 +309,12 @@ pub fn importSafe(factory: Client, registry: []const u8, address: []const u8, ar
     try import_values.appendSlice(tx_values[4..9]);
     try import_values.append(.{ .string = signatures });
     const receipt = try factory.transaction(if (preserve) "importSafeWithExtensionPolicy" else if (with_options) "importSafeWithOptions" else "importSafe", import_values.items, null, dry);
-    if (dry) return c.parse(a, try c.encode(a, .{ .transaction = receipt, .transactionHash = hash, .inspection = inspected }));
+    const submitted = try c.parse(a, try c.encode(a, .{ .transaction = receipt, .transactionHash = hash, .inspection = inspected }));
+    if (out) |path| try c.write(cast.io, path, try c.encode(a, submitted), true);
+    if (dry) return submitted;
     const verified = try inspectWithModuleCompleteness(factory, registry, address, true, check_modules);
     if (!(try field(verified, "valid")).bool) return error.ImportedSafeMismatch;
     const result = try c.parse(a, try c.encode(a, .{ .receipt = receipt, .inspection = verified }));
-    if (out) |path| try c.write(cast.io, path, try c.encode(a, result), false);
+    if (out) |path| try c.write(cast.io, path, try c.encode(a, result), true);
     return result;
 }

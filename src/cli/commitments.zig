@@ -29,12 +29,57 @@ pub fn save(v: Vault, chain: u64, registry: []const u8, draft: c.Value, replace:
     var drafts = try load(v, chain, registry);
     const id = try string(draft, "commitHash");
     if (!replace and drafts.object.contains(id)) return error.CommitmentDraftAlreadyExists;
-    if (!replace and drafts.object.count() == 1024) return error.CommitmentDraftLimit;
+    if (!drafts.object.contains(id) and drafts.object.count() >= 1024) return error.CommitmentDraftLimit;
     try drafts.object.put(v.a, id, draft);
     const bytes = try c.encode(v.a, drafts);
     defer std.crypto.secureZero(u8, @constCast(bytes));
     try v.put(try vaultKey(v.a, chain, registry), bytes);
     try v.db.db.commit();
+}
+fn archiveKey(a: c.A, chain: u64, registry: []const u8, id: []const u8) ![]const u8 {
+    return a.print("{s}:archive:{s}", .{ try vaultKey(a, chain, registry), id });
+}
+pub fn archived(v: Vault, chain: u64, registry: []const u8, id: []const u8) !?c.Value {
+    const bytes = (try v.get(try archiveKey(v.a, chain, registry, id))) orelse return null;
+    defer std.crypto.secureZero(u8, bytes);
+    return try c.parse(v.a, bytes);
+}
+pub fn archives(v: Vault, chain: u64, registry: []const u8) !c.Value {
+    const prefix = try archiveKey(v.a, chain, registry, "");
+    var rows = try v.db.db.rows("SELECT id, value FROM vault WHERE instr(id, ?)=1 ORDER BY id", .{prefix});
+    defer rows.deinit();
+    var result: c.Value = .{ .object = .empty };
+    while (rows.next()) |row| {
+        const bytes = try v.openBytes(row.text(0), row.blob(1));
+        defer std.crypto.secureZero(u8, bytes);
+        const draft = try c.parse(v.a, bytes);
+        try result.object.put(v.a, try string(draft, "commitHash"), draft);
+    }
+    if (rows.err) |err| return err;
+    return result;
+}
+fn archiveDraft(v: Vault, chain: u64, registry: []const u8, draft: c.Value) !void {
+    try codec.validate(v.a, draft, chain, registry);
+    try v.db.begin();
+    errdefer v.db.db.rollback();
+    var drafts = try load(v, chain, registry);
+    const id = try string(draft, "commitHash");
+    const current = drafts.object.get(id) orelse return error.CommitmentDraftNotFound;
+    const bytes = try c.encode(v.a, draft);
+    defer std.crypto.secureZero(u8, @constCast(bytes));
+    const current_bytes = try c.encode(v.a, current);
+    defer std.crypto.secureZero(u8, @constCast(current_bytes));
+    if (!c.eq(u8, bytes, current_bytes)) return error.CommitmentChanged;
+    try v.put(try archiveKey(v.a, chain, registry, id), bytes);
+    _ = drafts.object.orderedRemove(id);
+    const remaining = try c.encode(v.a, drafts);
+    defer std.crypto.secureZero(u8, @constCast(remaining));
+    try v.put(try vaultKey(v.a, chain, registry), remaining);
+    try v.db.db.commit();
+}
+fn requireArchivable(state: c.Value) !void {
+    if ((try field(state, "pendingActions")).array.items.len != 0) return error.CommitmentActionPending;
+    if (!@import("schema.zig").contains("absent expired", try string(state, "state"))) return error.ArchiveRequiresInactiveCommitment;
 }
 pub fn prepare(cast: *Cast, kind: []const u8, input: c.Value) !c.Value {
     const a = cast.a;
@@ -177,7 +222,7 @@ pub const Options = struct { verb: []const u8, out: ?[]const u8, signature: c.Va
 pub fn act(cast: *Cast, cat: contracts.Catalog, v: Vault, draft: *c.Value, options: Options) !c.Value {
     const a = cast.a;
     const verb = options.verb;
-    if (!@import("schema.zig").contains("status commit reveal cancel expire reconcile", verb)) return error.UnknownCommand;
+    if (!@import("schema.zig").contains("status commit reveal cancel expire reconcile archive", verb)) return error.UnknownCommand;
     if (cast.block != null) return error.TransactionRequiresLatestBlock;
     try codec.validate(a, draft.*, cast.chain, cast.instance);
     if (options.out) |path| try c.write(cast.io, path, "{\"status\":\"commitment-command-in-progress\"}\n", false);
@@ -185,7 +230,14 @@ pub fn act(cast: *Cast, cat: contracts.Catalog, v: Vault, draft: *c.Value, optio
     defer remote.deinit();
     try remote.pin(null, 0);
     const state = try snapshot(&remote, cat, draft.*);
-    if (c.eq(u8, verb, "reconcile")) {
+    if (c.eq(u8, verb, "archive")) {
+        try requireArchivable(state);
+        if (!try remote.canonical(remote.block)) return error.ChainReorganizedRetrySync;
+        if (!options.dry) try archiveDraft(v, cast.chain, cast.instance, draft.*);
+        const report = try c.parse(a, try c.encode(a, .{ .draft = try codec.summary(a, draft.*), .archived = !options.dry, .live = state }));
+        if (options.out) |path| try c.write(cast.io, path, try c.encode(a, report), true);
+        return report;
+    } else if (c.eq(u8, verb, "reconcile")) {
         if (options.dry) return error.DryRunNotApplicable;
         try reconcile(&remote, cat, draft, options.receipt_hash orelse return error.TransactionHashRequired);
         try save(v, cast.chain, cast.instance, draft.*, true);
@@ -229,4 +281,38 @@ pub fn act(cast: *Cast, cat: contracts.Catalog, v: Vault, draft: *c.Value, optio
     try report.object.put(a, "dryRun", .{ .bool = options.dry });
     if (options.out) |path| try c.write(cast.io, path, try c.encode(a, report), true);
     return report;
+}
+
+test "archiving frees active capacity and preserves recoverable encrypted drafts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const db = try @import("store.zig").Store.init(a, ":memory:");
+    defer db.close();
+    const v: Vault = .{ .a = a, .io = std.testing.io, .db = db, .key = @splat(1) };
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    var cast: Cast = .{ .a = a, .io = std.testing.io, .env = &env, .chain = 42161, .instance = "0x1111111111111111111111111111111111111111" };
+    const input = try c.parse(a, "{\"payload\":{\"org\":\"example\",\"id\":\"token\",\"symbol\":\"TKN\",\"decimals\":18}}");
+    var drafts: c.Value = .{ .object = .empty };
+    for (0..1024) |_| {
+        const draft = try prepare(&cast, "token", input);
+        try drafts.object.put(a, try string(draft, "commitHash"), draft);
+    }
+    try v.put(try vaultKey(a, cast.chain, cast.instance), try c.encode(a, drafts));
+    const next = try prepare(&cast, "token", input);
+    try std.testing.expectError(error.CommitmentDraftLimit, save(v, cast.chain, cast.instance, next, false));
+    const first = drafts.object.values()[0];
+    const second = drafts.object.values()[1];
+    try requireArchivable(try c.parse(a, "{\"state\":\"expired\",\"pendingActions\":[]}"));
+    try std.testing.expectError(error.ArchiveRequiresInactiveCommitment, requireArchivable(try c.parse(a, "{\"state\":\"active\",\"pendingActions\":[]}")));
+    try std.testing.expectError(error.CommitmentActionPending, requireArchivable(try c.parse(a, "{\"state\":\"absent\",\"pendingActions\":[{}]}")));
+    try archiveDraft(v, cast.chain, cast.instance, first);
+    try archiveDraft(v, cast.chain, cast.instance, second);
+    try save(v, cast.chain, cast.instance, next, false);
+    const restored = (try archived(v, cast.chain, cast.instance, try string(first, "commitHash"))).?;
+    try std.testing.expectEqualStrings(try c.encode(a, first), try c.encode(a, restored));
+    try save(v, cast.chain, cast.instance, restored, false);
+    try std.testing.expectEqual(@as(usize, 1024), (try load(v, cast.chain, cast.instance)).object.count());
+    try std.testing.expectEqual(@as(usize, 2), (try archives(v, cast.chain, cast.instance)).object.count());
 }

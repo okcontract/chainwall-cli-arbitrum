@@ -12,7 +12,7 @@ const Node = ms.tree.Node;
 
 pub const token_types = [_][]const u8{ "variable", "function", "keyword", "number", "string", "operator", "type", "namespace" };
 pub const commands = [_][]const u8{ "chainwall.compile", "chainwall.showCompiled", "chainwall.analyze", "chainwall.refresh", "chainwall.reload", "chainwall.fetchAbi", "chainwall.decompileInteraction", "chainwall.templates", "chainwall.status" };
-pub const Diagnostic = struct { range: text.Range, severity: u8 = 1, code: []const u8, source: []const u8 = "chainwall", message: []const u8 };
+pub const Diagnostic = struct { range: text.Range, severity: u8 = 1, code: []const u8, source: []const u8 = "chainwall", message: []const u8, data: ?struct { coordinateSpace: []const u8, diagnostic: ms.Diagnostic } = null };
 const Markup = struct { kind: []const u8 = "markdown", value: []const u8 };
 const Completion = struct {
     label: []const u8,
@@ -40,6 +40,8 @@ pub const Context = struct {
     tokens: []const text.Token,
     configuration_error: ?anyerror = null,
     versioned_edits: bool = false,
+    compiler_diagnostic: ms.Diagnostic = .{},
+    core_matches_source: bool = false,
 
     fn r(s: Context, span: text.Span) text.Range {
         return text.range(s.source, span, s.encoding);
@@ -62,7 +64,8 @@ pub const Context = struct {
         const parsed = &s.analysis.surface.?;
         const snapshot = try s.catalog.toSnapshot();
         const core = try parsed.preprocess(snapshot, s.catalog.selection.settings);
-        var program = try programs.artifact(s.a, s.uri, s.source, core, parsed.settings);
+        s.core_matches_source = c.eq(u8, core, s.source);
+        var program = try programs.artifactDetailed(s.a, s.uri, s.source, core, parsed.settings, &s.compiler_diagnostic);
         try programs.attachMetadata(s.a, &program, parsed.*, snapshot);
         const options = s.catalog.selection.analysis_options;
         if (options.read_only or options.linked) try program.object.put(s.a, "analysis", try @import("../cli/program_analysis.zig").analyze(s.a, try ms.bytecode.unhex(s.a, try c.string(c.field(program, "bytecode").?)), options));
@@ -70,6 +73,17 @@ pub const Context = struct {
     }
     fn diagnostic(s: Context, span: text.Span, err: anyerror) Diagnostic {
         return .{ .range = s.r(span), .code = @errorName(err), .message = message(err) };
+    }
+    fn diagnosticAnalysis(s: *Context) !c.Value {
+        const parsed = &s.analysis.surface.?;
+        const core = try parsed.preprocess(try s.catalog.toSnapshot(), s.catalog.selection.settings);
+        s.core_matches_source = c.eq(u8, core, s.source);
+        try std.Io.checkCancel(s.io);
+        const bytes = try ms.compileDetailed(s.a, core, parsed.settings, &s.compiler_diagnostic);
+        try std.Io.checkCancel(s.io);
+        // Diagnostics need semantic analysis, not decompilation, assembly,
+        // reference exports, metadata serialization, or a publication artifact.
+        return @import("../cli/program_analysis.zig").analyze(s.a, bytes, s.catalog.selection.analysis_options);
     }
     pub fn diagnostics(s: *Context) ![]const Diagnostic {
         var result: std.ArrayList(Diagnostic) = .empty;
@@ -94,15 +108,18 @@ pub const Context = struct {
             } else if (!c.eq(u8, try p.string(kind.?), wanted) and !c.eq(u8, try p.string(kind.?), "contract+token")) try result.append(s.a, s.diagnostic(node.span, error.RegistryKindMismatch));
         };
         if (result.items.len > 0) return result.items;
-        const program = s.compile() catch |err| {
-            if (err == error.OutOfMemory) return err;
-            const span = s.analysis.surface.?.diagnostic_span orelse s.analysis.surface.?.program.main.span;
+        const report = s.diagnosticAnalysis() catch |err| {
+            if (err == error.OutOfMemory or err == error.Canceled) return err;
+            const span = if (s.core_matches_source and s.compiler_diagnostic.primary != null) s.compiler_diagnostic.primary.? else s.analysis.surface.?.diagnostic_span orelse s.analysis.surface.?.program.main.span;
             var d = s.diagnostic(span, err);
+            if (s.compiler_diagnostic.code.len > 0) {
+                d.message = s.compiler_diagnostic.message;
+                d.data = .{ .coordinateSpace = if (s.core_matches_source) "source" else "coreSource", .diagnostic = s.compiler_diagnostic };
+            }
             if (err == error.MissingAbi) d.severity = 2;
             try result.append(s.a, d);
             return result.items;
         };
-        const report = c.field(program, "analysis").?;
         for ([_][]const u8{ "issues", "readOnlyViolations" }) |key| for (c.field(report, key).?.array.items) |issue| {
             // Dynamic operands can be valid at runtime while preventing a full
             // static report. Keep these distinct from compiler errors.
@@ -190,8 +207,11 @@ pub const Context = struct {
                 const builtin_signature = try p.string(p.field(entry, "signature"));
                 const doc = if (std.mem.startsWith(u8, name, "$arg")) try s.a.print("{s} argument {s}.", .{ if (s.catalog.selection.settings.argumentContext == .subject) "Original interaction" else "Program frame", name[4..] }) else try p.string(p.field(entry, "doc"));
                 const after = std.mem.trimStart(u8, s.source[end..], " \t\r\n");
-                const insert = if (s.snippets and is_function and !std.mem.startsWith(u8, after, "(")) try builtinSnippet(s.a, name, builtin_signature) else if (s.snippets) try snippetEscape(s.a, name) else name;
-                try out.append(s.a, .{ .label = name, .kind = if (is_function) 3 else 6, .detail = builtin_signature, .documentation = .{ .value = doc }, .textEdit = .{ .range = s.r(replace), .newText = insert }, .insertTextFormat = if (s.snippets) 2 else 1 });
+                const forms = try builtinForms(s.a, entry);
+                for (forms) |form| {
+                    const insert = if (s.snippets and is_function and !std.mem.startsWith(u8, after, "(")) try builtinSnippet(s.a, name, p.field(form, "parameters").array.items) else if (s.snippets) try snippetEscape(s.a, name) else name;
+                    try out.append(s.a, .{ .label = if (forms.len > 1) try p.string(p.field(form, "label")) else name, .filterText = name, .kind = if (is_function) 3 else 6, .detail = builtin_signature, .documentation = .{ .value = doc }, .textEdit = .{ .range = s.r(replace), .newText = insert }, .insertTextFormat = if (s.snippets) 2 else 1 });
+                }
             }
             for ([_][]const u8{ "let", "and", "in", "true", "false", "@contract", "@token" }) |name| if (matches(name, query)) try out.append(s.a, .{ .label = name, .kind = 14, .textEdit = .{ .range = s.r(replace), .newText = name } });
             if (c.trim(s.source).len == 0) for (p.field(s.language, "templates").array.items) |template| {
@@ -258,16 +278,22 @@ pub const Context = struct {
                 try signatures.append(try p.json(s.a, .{ .label = try methodLabel(s.a, item), .parameters = parameters.items, .activeParameter = @min(call.argument, parameters.items.len -| 1) }));
             };
         } else if (s.builtin(call.name.text)) |entry| {
-            const label = try p.string(p.field(entry, "signature"));
-            var parameters = std.json.Array.init(s.a);
-            if (std.mem.indexOfScalar(u8, label, '(')) |open| if (std.mem.indexOfScalarPos(u8, label, open, ')')) |close| {
-                var parts = std.mem.splitSequence(u8, label[open + 1 .. close], ", ");
-                while (parts.next()) |part| if (part.len > 0) try parameters.append(try p.json(s.a, .{ .label = part }));
-            };
-            try signatures.append(try p.json(s.a, .{ .label = label, .documentation = Markup{ .value = try p.string(p.field(entry, "doc")) }, .parameters = parameters.items, .activeParameter = @min(call.argument, parameters.items.len -| 1) }));
+            for (try builtinForms(s.a, entry)) |form| {
+                const parameters = p.field(form, "parameters").array.items;
+                try signatures.append(try p.json(s.a, .{ .label = p.field(form, "label"), .documentation = Markup{ .value = try p.string(p.field(entry, "doc")) }, .parameters = parameters, .activeParameter = @min(call.argument, parameters.len -| 1) }));
+            }
         }
         if (signatures.items.len == 0) return .null;
-        return p.json(s.a, .{ .signatures = signatures.items, .activeSignature = 0, .activeParameter = p.field(signatures.items[0], "activeParameter") });
+        var active: usize = 0;
+        for (signatures.items, 0..) |signature_, i| {
+            const count = p.field(signature_, "parameters").array.items.len;
+            if (count > p.field(signatures.items[active], "parameters").array.items.len) active = i;
+            if (call.argument < count) {
+                active = i;
+                break;
+            }
+        }
+        return p.json(s.a, .{ .signatures = signatures.items, .activeSignature = active, .activeParameter = p.field(signatures.items[active], "activeParameter") });
     }
     pub fn definition(s: Context, pos: usize) !c.Value {
         if (s.analysis.symbolAt(pos)) |index| return p.json(s.a, .{ .uri = s.uri, .range = s.r(s.analysis.symbols.items[index].span) });
@@ -297,10 +323,7 @@ pub const Context = struct {
         if (s.analysis.failure != null) return error.InvalidSource;
         const index = s.analysis.symbolAt(pos) orelse return error.NotALocalBinding;
         if (!text.identifier(name) or text.keyword(name) or s.builtin(name) != null or std.mem.startsWith(u8, name, "$")) return error.InvalidBindingName;
-        // Reject capture, including forward global references. A conservative
-        // collision check also avoids changing meaning inside nested scopes.
-        for (s.analysis.symbols.items, 0..) |symbol, i| if (i != index and std.ascii.eqlIgnoreCase(symbol.name, name)) return error.RenameWouldCaptureBinding;
-        for (s.analysis.uses.items) |use| if (use.symbol == null and std.ascii.eqlIgnoreCase(use.node.name, name)) return error.RenameWouldCaptureBinding;
+        try s.analysis.checkRename(index, name);
         var edits: std.ArrayList(text.Edit) = .empty;
         try edits.append(s.a, .{ .range = s.r(s.analysis.symbols.items[index].span), .newText = name });
         for (s.analysis.uses.items) |use| if (use.symbol == index and use.node.name_span.end > use.node.name_span.start) try edits.append(s.a, .{ .range = s.r(use.node.name_span), .newText = name });
@@ -456,15 +479,18 @@ pub const Context = struct {
             const node = existing.?;
             const args = node.children[1 .. node.children.len - @intFromBool(node.payable)];
             if (node.payable and method.mutability != .payable) return null;
-            fill = s.snippets and args.len == 0 and (inputs.len > 0 or method.mutability == .payable);
+            const empty_call = s.snippets and args.len == 0 and (inputs.len > 0 or method.mutability == .payable);
+            // LSP completion primary edits must stay on one line. For an empty
+            // multiline call, complete just its name and retain the parentheses.
+            fill = empty_call and std.mem.indexOfAny(u8, s.source[replace.start..node.span.end], "\r\n") == null;
             if (fill) {
                 replacement.end = node.span.end;
                 if (node.payable) {
                     const open = std.mem.indexOfScalarPos(u8, s.source, node.children[node.children.len - 1].span.end, '(') orelse return null;
                     options = s.source[replace.end..open];
                 }
-            } else if (args.len != inputs.len) return null;
-            if (!fill and overloaded) for (args, inputs) |arg, input| {
+            } else if (args.len != inputs.len and !empty_call) return null;
+            if (!fill and overloaded and args.len == inputs.len) for (args, inputs) |arg, input| {
                 const annotation = try surface.annotation(s.a, input);
                 if (arg.type_hint) |hint| {
                     if (!c.eq(u8, hint, annotation)) return null;
@@ -536,14 +562,24 @@ fn snippetEscape(a: c.A, source: []const u8) ![]const u8 {
     }
     return out.toOwnedSlice(a);
 }
-fn builtinSnippet(a: c.A, name: []const u8, signature: []const u8) ![]const u8 {
-    const open = std.mem.indexOfScalar(u8, signature, '(') orelse return snippetEscape(a, name);
-    const close = std.mem.indexOfScalarPos(u8, signature, open, ')') orelse return snippetEscape(a, name);
+fn builtinForms(a: c.A, entry: c.Value) ![]const c.Value {
+    if (c.field(entry, "overloads")) |forms| return forms.array.items;
+    const label = try p.string(p.field(entry, "signature"));
+    var parameters = std.json.Array.init(a);
+    if (std.mem.indexOfScalar(u8, label, '(')) |open| if (std.mem.indexOfScalarPos(u8, label, open, ')')) |close| {
+        var parts = std.mem.splitSequence(u8, label[open + 1 .. close], ", ");
+        while (parts.next()) |part| if (part.len > 0) try parameters.append(try p.json(a, .{ .label = part }));
+    };
+    const forms = try a.alloc(c.Value, 1);
+    forms[0] = try p.json(a, .{ .label = label, .parameters = parameters.items });
+    return forms;
+}
+fn builtinSnippet(a: c.A, name: []const u8, parameters: []const c.Value) ![]const u8 {
     var out: std.Io.Writer.Allocating = .init(a);
     try out.writer.print("{s}(", .{try snippetEscape(a, name)});
-    var parts = std.mem.splitSequence(u8, signature[open + 1 .. close], ", ");
     var index: usize = 1;
-    while (parts.next()) |part| {
+    for (parameters) |parameter| {
+        const part = try p.string(p.field(parameter, "label"));
         if (part.len == 0 or std.mem.endsWith(u8, part, "?")) continue;
         if (index > 1) try out.writer.writeAll(", ");
         try out.writer.print("${{{d}:{s}}}", .{ index, try snippetEscape(a, part) });
@@ -586,4 +622,67 @@ pub fn message(err: anyerror) []const u8 {
         error.StackCapacity, error.ResourceLimit, error.SourceTooLarge => "Program exceeds the compiler's resource limits.",
         else => @errorName(err),
     };
+}
+
+fn testContext(a: c.A, source: []const u8) !Context {
+    return .{ .a = a, .io = std.testing.io, .uri = "file:///test.ls", .source = source, .version = 1, .encoding = .utf16, .snippets = true, .catalog = .{ .a = a, .selection = .{ .dir = "", .profile_name = "", .profile = .{}, .chain = 0, .instance = "", .url = "", .settings = .{}, .snapshot = null, .abis = .null, .root = "" } }, .language = try c.parse(a, @embedFile("catalog.json")), .analysis = try syntax.Analysis.init(a, source), .tokens = try text.tokens(a, source) };
+}
+
+test "completion of empty multiline calls keeps its primary edit on the name line" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const abi = try c.parse(a, "[{\"type\":\"function\",\"name\":\"transfer\",\"stateMutability\":\"nonpayable\",\"inputs\":[{\"name\":\"to\",\"type\":\"address\"}],\"outputs\":[]}]");
+    for ([_][]const u8{ "@token(example/coin).transfer(\n)", "@token(example/coin).transfer()" }) |source| {
+        const ctx = try testContext(a, source);
+        const start = std.mem.indexOf(u8, source, "transfer").?;
+        const result = (try ctx.methodCompletion(abi.array.items[0], abi, .{ .start = start, .end = start + 8 }, ctx.analysis.namedAt(start))).?;
+        try std.testing.expectEqual(result.textEdit.range.start.line, result.textEdit.range.end.line);
+        try std.testing.expect(result.textEdit.range.start.character <= start);
+        if (std.mem.indexOfScalar(u8, source, '\n') != null) {
+            try std.testing.expectEqualStrings("transfer", result.textEdit.newText);
+            try std.testing.expectEqual(@as(usize, start + 8), result.textEdit.range.end.character);
+        } else try std.testing.expect(std.mem.indexOf(u8, result.textEdit.newText, "${1:") != null);
+    }
+}
+
+test "balance overloads drive signature help and completion snippets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var ctx = try testContext(a, "$balance(1, 2)");
+    const help = try ctx.signature(12);
+    try std.testing.expectEqual(@as(u256, 1), try c.number(a, p.field(help, "activeSignature")));
+    try std.testing.expectEqual(@as(u256, 1), try c.number(a, p.field(help, "activeParameter")));
+    const signatures = p.field(help, "signatures").array.items;
+    try std.testing.expectEqual(@as(usize, 2), signatures.len);
+    try std.testing.expectEqual(@as(usize, 2), p.field(signatures[1], "parameters").array.items.len);
+    ctx = try testContext(a, "$bal");
+    const completions = p.field(try ctx.completion(4), "items").array.items;
+    var overloads: usize = 0;
+    for (completions) |item| {
+        const label = try p.string(p.field(item, "label"));
+        if (std.mem.startsWith(u8, label, "$balance(")) {
+            overloads += 1;
+            const insert = try p.string(p.field(p.field(item, "textEdit"), "newText"));
+            if (c.eq(u8, label, "$balance(token, owner)")) try std.testing.expect(std.mem.indexOf(u8, insert, "${2:owner}") != null);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 2), overloads);
+}
+
+test "rename preparation does not select punctuation adjacent to a binding" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "let token = @token(example/coin) in token.transfer(1)";
+    const ctx = try testContext(a, source);
+    const dot = std.mem.indexOf(u8, source, ".transfer").?;
+    try std.testing.expectEqual(c.Value.null, try ctx.prepareRename(dot));
+    try std.testing.expectError(error.NotALocalBinding, ctx.rename(dot, "asset"));
+    const prepared = try ctx.prepareRename(dot - 1);
+    try std.testing.expectEqualStrings("token", try p.string(p.field(prepared, "placeholder")));
+    const range = p.field(prepared, "range");
+    try std.testing.expectEqual(@as(u256, dot - 5), try c.number(a, p.field(p.field(range, "start"), "character")));
+    try std.testing.expectEqual(@as(u256, dot), try c.number(a, p.field(p.field(range, "end"), "character")));
 }

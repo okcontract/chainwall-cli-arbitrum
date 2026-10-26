@@ -39,8 +39,8 @@ overwritten. Save compiler inputs and outputs alongside the job definition.
 
 For fee review, `--estimate --from ADDRESS` estimates at a canonical block and
 does not send. `transactions estimate` accepts a prepared transaction. Fee
-limits must be supplied again on submission; estimated execution gas omits
-chain-specific costs such as rollup L1 data fees.
+limits must be supplied again on submission. On Arbitrum, the transaction fee
+estimate includes both L2 execution and L1 data posting; do not add L1 fees again.
 
 ## Recover interrupted sends
 
@@ -51,6 +51,11 @@ chainwall transactions list
 chainwall transactions track "$TX_HASH"
 chainwall transactions wait "$TX_HASH" --timeout 120 --confirmations 2
 ```
+
+`confirmed` describes a successful receipt at the requested L2 block depth.
+Use `transactions track "$TX_HASH" --finality` for separate RPC `safe` and
+`finalized` markers. Neither depth tracking nor these markers verifies settlement;
+the report leaves that field `not-checked`.
 
 Logs save broadcast/receipt evidence before later checks. A CLI failure or
 timeout can follow a successful transaction. `wait`, `track` and `refresh`
@@ -90,10 +95,21 @@ Journal ciphertext establishes shared proposal data, not execution evidence.
 `unknown` requires fresh context or status checks. Preserve both journal
 checkpoint and execution `statusBlock` when reporting.
 
+`operations list --local` reads encrypted imports without a shared journal and
+reports status as `unknown`. Operational journal lists merge those imports before
+sorting. `--view audit` requires a synced journal, excludes imports, and cannot be
+combined with `--local`. Under `--all-chains`, use another chain's saved status
+only with its explicit Registry mapping and matching KV-scoped snapshot; preserve
+each entry's `statusRegistry` and `statusBlock` when reporting it.
+
 Private address books use `recipients --help`; private catalog publication
 uses `commitments template|prepare|commit|status|reveal`. Do not improvise salts
 or export private payloads into reports. Reveal simulation exposes its salt and
 payload to the chosen RPC, and a reveal transaction publishes them.
+
+After completion, `commitments archive HASH` checks that no active commitment or
+pending action remains and frees an active draft slot. `commitments archives`
+lists encrypted history. Use explicit export/import to recover an archived draft.
 
 Back up the configuration and SQLite store consistently. It can hold the only
 encrypted copy of pending secrets. `kv create --dry-run` and `kv rotate

@@ -10,7 +10,23 @@ const features = @import("features.zig");
 const programs = @import("../cli/programs.zig");
 const disassembly = @import("../cli/disassembly.zig");
 const Surface = @import("../cli/surface.zig").Surface;
-const Document = struct { source: []const u8, version: i64 };
+const Cached = struct { arena: std.heap.ArenaAllocator, context: features.Context, revision: u64 };
+const Document = struct { source: []const u8, version: i64, cached: ?*Cached = null, diagnostic: ?*DiagnosticJob = null };
+const DiagnosticJob = struct {
+    arena: std.heap.ArenaAllocator,
+    context: features.Context,
+    transport: *p.Transport,
+    canceled: std.atomic.Value(bool) = .init(false),
+    done: std.atomic.Value(bool) = .init(false),
+    future: ?std.Io.Future(void) = null,
+    fn run(job: *@This()) void {
+        defer job.done.store(true, .release);
+        std.Io.sleep(job.context.io, .fromMilliseconds(150), .awake) catch return;
+        const items = job.context.diagnostics() catch return;
+        if (job.canceled.load(.acquire)) return;
+        job.transport.notify("textDocument/publishDiagnostics", .{ .uri = job.context.uri, .version = job.context.version, .diagnostics = items }) catch {};
+    }
+};
 const Folder = struct { uri: []const u8, path: []const u8 };
 
 fn nested(input: c.Value, names: []const []const u8) c.Value {
@@ -81,13 +97,18 @@ pub const Server = struct {
     show_document: bool = false,
     request_sequence: usize = 0,
     job: ?*Job = null,
+    metadata_revision: u64 = 0,
+    cache_builds: usize = 0,
+    refresh_diagnostics: bool = false,
 
     pub fn init(a: c.A, io: std.Io, env: *const std.process.Environ.Map, root: []const u8, config_dir: []const u8, base_options: c.Value, language: c.Value) Server {
         return .{ .a = a, .io = io, .env = env, .root = root, .config_dir = config_dir, .base_options = base_options, .configuration_arena = .init(a), .language = language, .transport = .{ .io = io } };
     }
     pub fn deinit(s: *Server) void {
         s.finishJob(true);
-        for (s.documents.keys(), s.documents.values()) |key, doc| {
+        for (s.documents.keys(), s.documents.values()) |key, *doc| {
+            s.cancelDiagnostics(doc);
+            s.releaseCache(doc.cached);
             s.a.free(key);
             s.a.free(doc.source);
         }
@@ -106,24 +127,92 @@ pub const Server = struct {
         if (job.future) |*future| {
             if (cancel) future.cancel(s.io) else future.await(s.io);
         }
+        // Invalidation cancels queued diagnostics even when a refresh fails.
+        // Republish the current document versions after every completed job.
+        if (!cancel) s.refresh_diagnostics = true;
         job.arena.deinit();
         s.a.destroy(job);
         s.job = null;
+        s.invalidate();
+    }
+    fn releaseCache(s: *Server, cached: ?*Cached) void {
+        if (cached) |entry| {
+            entry.arena.deinit();
+            s.a.destroy(entry);
+        }
+    }
+    fn cancelDiagnostics(s: *Server, doc: *Document) void {
+        const job = doc.diagnostic orelse return;
+        job.canceled.store(true, .release);
+        if (job.future) |*future| future.cancel(s.io);
+        job.arena.deinit();
+        s.a.destroy(job);
+        doc.diagnostic = null;
+    }
+    fn scheduleDiagnostics(s: *Server, uri: []const u8) !void {
+        const doc = s.documents.getPtr(uri) orelse return error.DocumentNotOpen;
+        s.cancelDiagnostics(doc);
+        const job = try s.a.create(DiagnosticJob);
+        errdefer s.a.destroy(job);
+        job.arena = .init(std.heap.page_allocator);
+        errdefer job.arena.deinit();
+        job.context = try s.context(job.arena.allocator(), uri);
+        job.transport = &s.transport;
+        job.canceled = .init(false);
+        job.done = .init(false);
+        job.future = try s.io.concurrent(DiagnosticJob.run, .{job});
+        doc.diagnostic = job;
+    }
+    fn invalidate(s: *Server) void {
+        s.metadata_revision +%= 1;
+        for (s.documents.values()) |*doc| {
+            s.cancelDiagnostics(doc);
+            s.releaseCache(doc.cached);
+            doc.cached = null;
+        }
     }
     pub fn run(s: *Server) !u8 {
         var buffer: [8192]u8 = undefined;
         var reader = std.Io.File.stdin().readerStreaming(s.io, &buffer);
+        const Event = union(enum) { input: anyerror!?[]const u8, tick: anyerror!void };
+        var events: [3]Event = undefined;
+        var select = std.Io.Select(Event).init(s.io, &events);
+        defer while (select.cancel()) |event| switch (event) {
+            .input => |result| if (result catch null) |body| std.heap.page_allocator.free(body),
+            .tick => {},
+        };
+        try select.concurrent(.input, readInput, .{&reader.interface});
+        var ticking = false;
         while (s.exit_code == null) {
-            var arena = std.heap.ArenaAllocator.init(s.a);
-            defer arena.deinit();
-            const a = arena.allocator();
-            const body = (try p.read(a, &reader.interface)) orelse break;
-            const request = std.json.parseFromSlice(c.Value, a, body, .{ .allocate = .alloc_always }) catch {
-                try s.transport.failure(.null, -32700, "Invalid JSON");
-                continue;
-            };
+            const event = try select.await();
+            if (event == .tick) {
+                try event.tick;
+                ticking = false;
+            }
             s.finishJob(false);
-            try s.handle(a, request.value);
+            if (s.refresh_diagnostics) {
+                s.refresh_diagnostics = false;
+                try s.publishAll();
+            }
+            if (event == .input) {
+                const body = (try event.input) orelse break;
+                defer std.heap.page_allocator.free(body);
+                try select.concurrent(.input, readInput, .{&reader.interface});
+                var arena = std.heap.ArenaAllocator.init(s.a);
+                defer arena.deinit();
+                const a = arena.allocator();
+                const request = std.json.parseFromSlice(c.Value, a, body, .{ .allocate = .alloc_always }) catch {
+                    try s.transport.failure(.null, -32700, "Invalid JSON");
+                    continue;
+                };
+                try s.handle(a, request.value);
+            }
+            // Only poll while an explicit metadata job is active. The input
+            // reader remains pending, so completion wakes an otherwise idle LSP.
+            if (s.job != null and !ticking) {
+                try select.concurrent(.tick, refreshTick, .{s.io});
+                ticking = true;
+            }
         }
         return s.exit_code orelse if (s.shutdown) @as(u8, 0) else 1;
     }
@@ -208,6 +297,7 @@ pub const Server = struct {
         }
         if (c.eq(u8, method, "shutdown")) {
             s.finishJob(true);
+            for (s.documents.values()) |*doc| s.cancelDiagnostics(doc);
             s.shutdown = true;
             return @as(c.Value, .null);
         }
@@ -228,10 +318,12 @@ pub const Server = struct {
             s.configuration_arena = next;
             next = .init(s.a); // Ownership moved; a publish failure must not free live options.
             s.options = options;
+            s.invalidate();
             try s.publishAll();
             return null;
         }
         if (c.eq(u8, method, "workspace/didChangeWatchedFiles")) {
+            s.invalidate();
             try s.publishAll();
             return null;
         }
@@ -242,6 +334,7 @@ pub const Server = struct {
             if (removed != .array or added != .array) return error.InvalidParams;
             for (removed.array.items) |folder| s.removeFolder(try p.string(p.field(folder, "uri")));
             for (added.array.items) |folder| try s.addFolder(try p.string(p.field(folder, "uri")));
+            s.invalidate();
             try s.publishAll();
             return null;
         }
@@ -250,7 +343,7 @@ pub const Server = struct {
             const uri = try p.string(p.field(doc, "uri"));
             const source = try p.string(p.field(doc, "text"));
             const version = try p.integer(p.field(doc, "version"));
-            if (s.documents.contains(uri) or s.documents.count() >= 128 or source.len > text.max_source or !std.unicode.utf8ValidateSlice(source)) return error.InvalidParams;
+            if (s.documents.contains(uri) or s.documents.count() >= ms.limits.open_documents or source.len > text.max_source or !std.unicode.utf8ValidateSlice(source)) return error.InvalidParams;
             {
                 const key = try s.a.dupe(u8, uri);
                 errdefer s.a.free(key);
@@ -269,15 +362,21 @@ pub const Server = struct {
             if (version <= doc.version) return null;
             const source = try text.changed(a, doc.source, p.field(params, "contentChanges"), s.encoding);
             const owned = try s.a.dupe(u8, source);
+            s.cancelDiagnostics(doc);
+            s.releaseCache(doc.cached);
+            doc.cached = null;
             s.a.free(doc.source);
             doc.source = owned;
             doc.version = version;
-            try s.publish(a, uri);
+            try s.scheduleDiagnostics(uri);
             return null;
         }
         if (c.eq(u8, method, "textDocument/didClose")) {
             const uri = try p.string(nested(params, &.{ "textDocument", "uri" }));
             if (s.documents.fetchOrderedRemove(uri)) |entry| {
+                var closed = entry.value;
+                s.cancelDiagnostics(&closed);
+                s.releaseCache(entry.value.cached);
                 s.a.free(entry.key);
                 s.a.free(entry.value.source);
             }
@@ -307,7 +406,14 @@ pub const Server = struct {
         if (!supported) return error.MethodNotFound;
         const uri = try p.string(nested(params, &.{ "textDocument", "uri" }));
         var ctx = try s.context(a, uri);
-        if (c.eq(u8, method, "textDocument/diagnostic")) return try p.json(a, .{ .kind = "full", .items = try ctx.diagnostics() });
+        if (c.eq(u8, method, "textDocument/diagnostic")) {
+            const doc = s.documents.getPtr(uri).?;
+            const pending = if (doc.diagnostic) |job| !job.done.load(.acquire) else false;
+            s.cancelDiagnostics(doc);
+            const items = try ctx.diagnostics();
+            if (pending) try s.transport.notify("textDocument/publishDiagnostics", .{ .uri = uri, .version = ctx.version, .diagnostics = items });
+            return try p.json(a, .{ .kind = "full", .items = items });
+        }
         if (c.eq(u8, method, "textDocument/documentSymbol")) return try ctx.symbols();
         if (c.eq(u8, method, "textDocument/semanticTokens/full")) return try ctx.semanticTokens();
         if (c.eq(u8, method, "textDocument/foldingRange")) return try ctx.folding();
@@ -319,7 +425,10 @@ pub const Server = struct {
         if (c.eq(u8, method, "chainwall/analyze")) return c.field(try ctx.compile(), "analysis").?;
         if (c.eq(u8, method, "textDocument/formatting")) {
             const indent = p.integer(nested(params, &.{ "options", "tabSize" })) catch 2;
-            const formatted = syntax.format(a, ctx.source, @intCast(@max(1, @min(indent, 8)))) catch |err| {
+            if (indent < 1 or indent > ms.limits.indentation_width) return error.InvalidParams;
+            const spaces = nested(params, &.{ "options", "insertSpaces" });
+            if (spaces != .null and spaces != .bool) return error.InvalidParams;
+            const formatted = ms.syntax.formatWithOptions(a, ctx.source, .{ .tab_size = @intCast(indent), .insert_spaces = spaces == .null or spaces.bool }) catch |err| {
                 if (err == error.OutOfMemory) return err;
                 return try p.json(a, &[_]c.Value{});
             };
@@ -367,6 +476,31 @@ pub const Server = struct {
         return .{ .root = root, .options = options };
     }
     fn context(s: *Server, a: c.A, uri: []const u8) !features.Context {
+        const doc = s.documents.getPtr(uri) orelse return error.DocumentNotOpen;
+        if (doc.cached) |cached| if (cached.revision != s.metadata_revision or cached.context.version != doc.version) {
+            s.releaseCache(doc.cached);
+            doc.cached = null;
+        };
+        if (doc.cached == null) {
+            const cached = try s.a.create(Cached);
+            errdefer s.a.destroy(cached);
+            cached.arena = .init(s.a);
+            errdefer cached.arena.deinit();
+            cached.context = try s.buildContext(cached.arena.allocator(), try cached.arena.allocator().dupe(u8, uri));
+            cached.revision = s.metadata_revision;
+            doc.cached = cached;
+            s.cache_builds += 1;
+        }
+        // Cached syntax and catalogs are immutable. Per-request rendering and
+        // preprocessing allocate in the request arena, never the cache arena.
+        var result = doc.cached.?.context;
+        result.a = a;
+        result.catalog.a = a;
+        result.analysis.a = a;
+        if (result.analysis.surface) |*surface_| surface_.a = a;
+        return result;
+    }
+    fn buildContext(s: *Server, a: c.A, uri: []const u8) !features.Context {
         const doc = s.documents.get(uri) orelse return error.DocumentNotOpen;
         var issue: ?anyerror = null;
         const catalog = s.loadCatalog(a, uri) catch |err| blk: {
@@ -389,6 +523,7 @@ pub const Server = struct {
         return metadata.Catalog.load(a, s.io, try metadata.Selection.resolve(a, s.io, s.env, s.config_dir, selected.options, selected.root));
     }
     fn publish(s: *Server, a: c.A, uri: []const u8) !void {
+        if (s.documents.getPtr(uri)) |doc| s.cancelDiagnostics(doc);
         var ctx = try s.context(a, uri);
         try s.transport.notify("textDocument/publishDiagnostics", .{ .uri = uri, .version = ctx.version, .diagnostics = try ctx.diagnostics() });
     }
@@ -424,6 +559,7 @@ pub const Server = struct {
             return null;
         }
         if (c.eq(u8, command, "chainwall.reload")) {
+            s.invalidate();
             try s.publishAll();
             return @as(c.Value, .null);
         }
@@ -431,7 +567,7 @@ pub const Server = struct {
             const catalog = try s.loadCatalog(a, uri);
             var issues: std.json.ObjectMap = .empty;
             for (catalog.abi_issues.keys(), catalog.abi_issues.values()) |hash, issue| try issues.put(a, hash, .{ .string = issue });
-            return try p.json(a, .{ .profile = catalog.selection.profile_name, .chainId = catalog.selection.chain, .instance = catalog.selection.instance, .entries = catalog.entries.items.len, .checkpoints = c.Value{ .object = catalog.checkpoints }, .abiIssues = c.Value{ .object = issues }, .offlineSnapshot = catalog.selection.snapshot });
+            return try p.json(a, .{ .profile = catalog.selection.profile_name, .chainId = catalog.selection.chain, .instance = catalog.selection.instance, .entries = catalog.entries.items.len, .checkpoints = c.Value{ .object = catalog.checkpoints }, .cache = try @import("../cli/cache_metadata.zig").describe(a, if (catalog.selection.snapshot != null) "snapshot-file" else "sqlite-cache", .null, .null, issues.count() > 0), .cacheByDataset = try @import("../cli/cache_metadata.zig").datasets(a, if (catalog.selection.snapshot != null) "snapshot-file" else "sqlite-cache", .{ .object = catalog.checkpoints }), .abiIssues = c.Value{ .object = issues }, .offlineSnapshot = catalog.selection.snapshot });
         }
         if (c.eq(u8, command, "chainwall.compile") or c.eq(u8, command, "chainwall.showCompiled") or c.eq(u8, command, "chainwall.analyze")) {
             var ctx = try s.context(a, uri);
@@ -491,6 +627,13 @@ pub const Server = struct {
         return .{ .array = out };
     }
 };
+
+fn readInput(reader: *std.Io.Reader) anyerror!?[]const u8 {
+    return p.read(std.heap.page_allocator, reader);
+}
+fn refreshTick(io: std.Io) anyerror!void {
+    try std.Io.sleep(io, .fromMilliseconds(50), .awake);
+}
 fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     if (needle.len > haystack.len) return false;
     for (0..haystack.len - needle.len + 1) |i| if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
@@ -514,4 +657,32 @@ test "initialize retry releases each owned buffer on allocation failures" {
     defer arena.deinit();
     const params = try c.parse(arena.allocator(), "{\"rootUri\":\"file:///tmp\",\"capabilities\":{}}");
     try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationInitialize, .{params});
+}
+
+test "document cache reuses syntax and catalog until version or metadata changes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    var env: std.process.Environ.Map = .init(a);
+    var server = Server.init(a, std.testing.io, &env, dir, dir, .null, .null);
+    defer server.deinit();
+    server.options = try c.parse(a, "{}");
+    const uri = try a.print("file://{s}/cache.ls", .{dir});
+    try server.documents.put(a, try a.dupe(u8, uri), .{ .source = try a.dupe(u8, "let x = 1 in x"), .version = 1 });
+    var first = try server.context(a, uri);
+    const second = try server.context(a, uri);
+    try std.testing.expectEqual(first.analysis.nodes.items.ptr, second.analysis.nodes.items.ptr);
+    try std.testing.expectEqual(1, server.cache_builds);
+    // Preprocessing a returned copy must not mutate the cached Surface maps.
+    _ = try first.analysis.surface.?.preprocess(try first.catalog.toSnapshot(), .{});
+    try std.testing.expectEqual(0, server.documents.get(uri).?.cached.?.context.analysis.surface.?.accepted.count());
+    server.documents.getPtr(uri).?.version = 2;
+    _ = try server.context(a, uri);
+    try std.testing.expectEqual(2, server.cache_builds);
+    server.invalidate();
+    _ = try server.context(a, uri);
+    try std.testing.expectEqual(3, server.cache_builds);
 }

@@ -14,7 +14,7 @@ pub const Parser = struct {
 
     fn advance(p: *Parser) Error!void {
         p.tokens += 1;
-        if (p.tokens > 32768) return error.ResourceLimit;
+        if (p.tokens > t.limits.syntax_tokens) return error.ResourceLimit;
         while (p.pos < p.source.len and std.ascii.isWhitespace(p.source[p.pos])) p.pos += 1;
         const start = p.pos;
         if (start == p.source.len) {
@@ -228,7 +228,7 @@ pub const Parser = struct {
     fn typeHint(p: *Parser) Error![]const u8 {
         p.depth += 1;
         defer p.depth -= 1;
-        if (p.depth > 256) return error.ResourceLimit;
+        if (p.depth > t.limits.syntax_depth) return error.ResourceLimit;
         if (try p.take("[")) {
             const child = try p.typeHint();
             const length = if (try p.take(";")) blk: {
@@ -270,7 +270,7 @@ pub const Parser = struct {
         // keeping primary on the stack. Count every recursive expression.
         p.depth += 1;
         defer p.depth -= 1;
-        if (p.depth > 256) return error.ResourceLimit;
+        if (p.depth > t.limits.syntax_depth) return error.ResourceLimit;
         var left = try p.primary();
         while (true) {
             const prec = precedence(p.token.text);
@@ -287,10 +287,12 @@ pub const Parser = struct {
         return left;
     }
     fn checkTree(node: *Node, depth: usize, remaining: *usize) Error!void {
-        if (depth > 256 or remaining.* == 0) return error.ResourceLimit;
+        if (depth > t.limits.syntax_depth or remaining.* == 0) return error.ResourceLimit;
         remaining.* -= 1;
         for (node.children) |child| try checkTree(child, depth + 1, remaining);
     }
+    /// Uses the Factory's arena, including partial work on failure. Identifier
+    /// spelling and literal source slices borrow source; retain it with the tree.
     pub fn parse(p: *Parser) Error!t.Program {
         try p.advance();
         var bindings: std.ArrayList(t.Binding) = .empty;
@@ -309,7 +311,13 @@ pub const Parser = struct {
                     const s = try p.name();
                     try p.expect("=");
                     const value = try p.expression(0);
-                    for (bindings.items) |b| if (t.same(b.name, s)) return error.DuplicateBinding;
+                    for (bindings.items) |b| if (t.same(b.name, s)) {
+                        if (p.f.diagnostic) |d| {
+                            d.record(name_span, error.DuplicateBinding);
+                            d.related = b.name_span;
+                        }
+                        return error.DuplicateBinding;
+                    };
                     try bindings.append(p.f.a, .{ .name = s, .value = value, .spelling = spelling, .name_span = name_span });
                     if (!component or !try p.take("and")) break;
                 }
@@ -331,7 +339,7 @@ pub const Parser = struct {
         if (mains.items.len > 1) main.span = .{ .start = mains.items[0].span.start, .end = mains.items[mains.items.len - 1].span.end };
         // Iterative parsing can still construct deep left-associated or postfix
         // trees. Bound them before lowering and other recursive traversals.
-        var remaining: usize = 8192;
+        var remaining: usize = t.limits.syntax_nodes;
         for (bindings.items) |binding| try checkTree(binding.value, 1, &remaining);
         try checkTree(main, 1, &remaining);
         return .{ .bindings = bindings.items, .main = main };
@@ -340,16 +348,21 @@ pub const Parser = struct {
 
 pub fn parseNumber(a: t.Allocator, text: []const u8) Error!u256 {
     var clean: std.ArrayList(u8) = .empty;
-    for (text) |c| if (c != '_') {
-        try clean.append(a, c);
-    };
+    const hex = std.mem.startsWith(u8, text, "0x") or std.mem.startsWith(u8, text, "0X");
+    for (text, 0..) |c, index| {
+        if (c == '_') {
+            if (index == 0 or index + 1 == text.len) return error.InvalidConstant;
+            const digit: *const fn (u8) bool = if (hex) std.ascii.isHex else std.ascii.isDigit;
+            if (!digit(text[index - 1]) or !digit(text[index + 1])) return error.InvalidConstant;
+        } else try clean.append(a, c);
+    }
     const s = clean.items;
     if (std.mem.startsWith(u8, s, "0x") or std.mem.startsWith(u8, s, "0X")) return std.fmt.parseInt(u256, s[2..], 16) catch error.InvalidConstant;
     const e = std.mem.indexOfAny(u8, s, "eE") orelse s.len;
     const exponent: i32 = if (e < s.len) std.fmt.parseInt(i32, s[e + 1 ..], 10) catch return error.InvalidConstant else 0;
-    var value: u256 = 0;
-    var fractional: i32 = 0;
+    var fractional: usize = 0;
     var dot = false;
+    var digits: usize = 0;
     for (s[0..e]) |c| {
         if (c == '.') {
             if (dot) return error.InvalidConstant;
@@ -357,25 +370,33 @@ pub fn parseNumber(a: t.Allocator, text: []const u8) Error!u256 {
             continue;
         }
         if (!std.ascii.isDigit(c)) return error.InvalidConstant;
-        const mul = @mulWithOverflow(value, 10);
-        const add = @addWithOverflow(mul[0], c - '0');
-        if (mul[1] != 0 or add[1] != 0) return error.InvalidConstant;
-        value = add[0];
+        clean.items[digits] = c;
+        digits += 1;
         if (dot) fractional += 1;
     }
-    const scale: i64 = @as(i64, exponent) - fractional;
-    if (scale > 77 or scale < -1000) return error.InvalidConstant;
-    var i: i64 = 0;
-    while (i < @abs(scale)) : (i += 1) {
-        if (scale < 0) {
-            if (value % 10 != 0) return error.InvalidConstant;
-            value /= 10;
-        } else {
-            const mul = @mulWithOverflow(value, 10);
-            if (mul[1] != 0) return error.InvalidConstant;
-            value = mul[0];
-        }
+    if (digits == 0) return error.InvalidConstant;
+    var mantissa = std.mem.trimStart(u8, clean.items[0..digits], "0");
+    if (mantissa.len == 0) return 0;
+    const scale: i64 = @as(i64, exponent) - (std.math.cast(i64, fractional) orelse return error.InvalidConstant);
+    // Cancel exact decimal divisors in text before uint256 accumulation. A
+    // wider intermediate mantissa is valid when the final integer fits.
+    if (scale < 0) {
+        const remove = @abs(scale);
+        if (remove >= mantissa.len) return error.InvalidConstant;
+        const end = mantissa.len - @as(usize, @intCast(remove));
+        if (!std.mem.allEqual(u8, mantissa[end..], '0')) return error.InvalidConstant;
+        mantissa = mantissa[0..end];
     }
+    const zeros: usize = if (scale > 0) std.math.cast(usize, scale) orelse return error.InvalidConstant else 0;
+    if (mantissa.len > 78 or zeros > 78 - mantissa.len) return error.InvalidConstant;
+    var value: u256 = 0;
+    for (mantissa) |digit| {
+        const mul = @mulWithOverflow(value, 10);
+        const add = @addWithOverflow(mul[0], digit - '0');
+        if (mul[1] != 0 or add[1] != 0) return error.InvalidConstant;
+        value = add[0];
+    }
+    for (0..zeros) |_| value = std.math.mul(u256, value, 10) catch return error.InvalidConstant;
     return value;
 }
 
@@ -384,4 +405,35 @@ test "exact decimal and scientific words" {
     defer arena.deinit();
     try std.testing.expectEqual(@as(u256, 1_500_000_000_000_000_000), try parseNumber(arena.allocator(), "1.5e18"));
     try std.testing.expectError(error.InvalidConstant, parseNumber(arena.allocator(), "0.1"));
+}
+
+test "numeric words require digits and separators between digits" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "", ".", "e2", "_", "_1", "1_", "1__2", "1_e2", "1e_2", "0x_FF" }) |value|
+        try std.testing.expectError(error.InvalidConstant, parseNumber(a, value));
+    for ([_][]const u8{ "0", "0.0", ".0", "0e2", "0_0", "0x0" }) |value|
+        try std.testing.expectEqual(@as(u256, 0), try parseNumber(a, value));
+    try std.testing.expectEqual(@as(u256, 12000), try parseNumber(a, "1_2e3"));
+    try std.testing.expectEqual(@as(u256, 65535), try parseNumber(a, "0xFF_FF"));
+}
+
+test "scaled decimal parsing checks the final integer instead of intermediate mantissa" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const max = std.math.maxInt(u256);
+    try std.testing.expectEqual(max, try parseNumber(a, try a.print("{d}.0", .{max})));
+    try std.testing.expectEqual(max, try parseNumber(a, try a.print("{d}000e-3", .{max})));
+    try std.testing.expectError(error.InvalidConstant, parseNumber(a, try a.print("{d}001e-3", .{max})));
+    try std.testing.expectError(error.InvalidConstant, parseNumber(a, try a.print("{d}e1", .{max})));
+    try std.testing.expectEqual(1, try parseNumber(a, "0.0001e4"));
+    try std.testing.expectEqual(0, try parseNumber(a, "0e2147483647"));
+    try std.testing.expectError(error.InvalidConstant, parseNumber(a, "1e-2147483648"));
+    try std.testing.expectError(error.InvalidConstant, parseNumber(a, "0e2147483648"));
+    var long: std.ArrayList(u8) = .empty;
+    try long.appendSlice(a, "1.");
+    try long.appendNTimes(a, '0', 1200);
+    try std.testing.expectEqual(1, try parseNumber(a, long.items));
 }

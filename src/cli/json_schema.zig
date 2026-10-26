@@ -10,6 +10,7 @@ pub const Validator = struct {
     a: c.A,
     root: c.Value,
     failure: ?Failure = null,
+    quiet: bool = false,
     remaining: usize = 200000,
 
     pub fn init(a: c.A) !Validator {
@@ -117,10 +118,13 @@ pub const Validator = struct {
         return result;
     }
     pub fn require(v: *Validator, io: std.Io, rule: c.Value, value: c.Value, label: []const u8) !void {
-        if (try v.check(rule, value)) return;
+        if (try v.check(rule, value)) {
+            v.failure = null;
+            return;
+        }
         const failure = v.failure.?;
         // Never include input values: files can contain salts or credentials.
-        try std.Io.File.stderr().writeStreamingAll(io, try v.a.print("Invalid JSON input ({s}) at {s}: {s}\n", .{ label, if (failure.path.len == 0) "/" else failure.path, failure.message }));
+        if (!v.quiet) try std.Io.File.stderr().writeStreamingAll(io, try v.a.print("Invalid JSON input ({s}) at {s}: {s}\n", .{ label, if (failure.path.len == 0) "/" else failure.path, failure.message }));
         return error.JsonInputValidationFailed;
     }
 };
@@ -137,31 +141,23 @@ fn number(value: c.Value) !f64 {
 }
 fn matchesType(kind: []const u8, value: c.Value) bool {
     if (c.eq(u8, kind, "integer")) {
-        const n = number(value) catch return false;
-        return std.math.isFinite(n) and @trunc(n) == n and (value != .number_string or integerText(value.number_string));
+        return switch (value) {
+            .integer => true,
+            .number_string => |text| integerText(text),
+            else => false,
+        };
     }
     if (c.eq(u8, kind, "number")) return numeric(value);
     if (c.eq(u8, kind, "boolean")) return value == .bool;
     return c.eq(u8, kind, @tagName(value));
 }
-/// JSON numbers retain their source text. Check integrality before floating-point
-/// rounding can turn a small fractional part (or an underflow) into an integer.
+/// ABI integer inputs use plain decimal notation, matching the encoder.
+/// Reject decimal points and exponents before any command can change state.
 fn integerText(source: []const u8) bool {
-    const end = std.mem.indexOfAny(u8, source, "eE") orelse source.len;
-    const mantissa = source[0..end];
-    var trailing: i64 = 0;
-    var nonzero = false;
-    for (mantissa) |ch| {
-        if (!std.ascii.isDigit(ch)) continue;
-        if (ch == '0') trailing += 1 else {
-            trailing = 0;
-            nonzero = true;
-        }
-    }
-    if (!nonzero) return true;
-    const fraction: i64 = if (std.mem.indexOfScalar(u8, mantissa, '.')) |point| @intCast(mantissa.len - point - 1) else 0;
-    const exponent: i64 = if (end < source.len) std.fmt.parseInt(i64, source[end + 1 ..], 10) catch return source[end + 1] != '-' else 0;
-    return exponent >= fraction - trailing;
+    const digits = if (std.mem.startsWith(u8, source, "-")) source[1..] else source;
+    if (digits.len == 0) return false;
+    for (digits) |ch| if (!std.ascii.isDigit(ch)) return false;
+    return true;
 }
 fn equal(a: c.A, left: c.Value, right: c.Value) !bool {
     if (numeric(left) and numeric(right)) return matchesType("integer", left) == matchesType("integer", right) and try number(left) == try number(right);
@@ -271,12 +267,13 @@ test "schemas reject nested typos, unsafe JSON integers, and malformed signature
     try std.testing.expectEqualStrings("/interactionId", v.failure.?.path);
     const params = try c.parse(a, "[{\"name\":\"amount\",\"type\":\"uint256\"}]");
     const rule = try abiArguments(a, params, true);
+    try std.testing.expect(try v.check(rule, try c.parse(a, "{\"amount\":12}")));
     try std.testing.expect(try v.check(rule, try c.parse(a, "{\"amount\":\"9007199254740993\"}")));
     try std.testing.expect(!try v.check(rule, try c.parse(a, "{\"amount\":9007199254740993}")));
     try std.testing.expect(!try v.check(rule, try c.parse(a, "{\"amount\":1.000000000000000000001}")));
     try std.testing.expect(!try v.check(rule, try c.parse(a, "{\"amount\":1e-9999}")));
-    try std.testing.expect(try v.check(rule, try c.parse(a, "{\"amount\":1.20e1}")));
-    try std.testing.expect(try v.check(rule, try c.parse(a, "{\"amount\":0.0e-9999}")));
+    try std.testing.expect(!try v.check(rule, try c.parse(a, "{\"amount\":1.20e1}")));
+    try std.testing.expect(!try v.check(rule, try c.parse(a, "{\"amount\":0.0e-9999}")));
     try std.testing.expect(!try equal(a, try c.parse(a, "1.000000000000000000001"), .{ .integer = 1 }));
     try std.testing.expect(!try v.check(rule, try c.parse(a, "{\"amount\":\"1\",\"amout\":\"2\"}")));
     try std.testing.expect(!try v.check(try v.schema("safe-signatures"), try c.parse(a, "[]")));

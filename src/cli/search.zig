@@ -117,5 +117,5 @@ pub fn run(a: c.A, db: Store, profile: Profile, chain: u64, registry: []const u8
         }
     }.less);
     const offset = @min(start, matched.items.len);
-    return c.parse(a, try c.encode(a, .{ .query = query, .chainId = chain, .registry = registry, .total = matched.items.len, .entries = matched.items[offset..@min(offset + count, matched.items.len)], .checkpoints = c.Value{ .object = checkpoints } }));
+    return c.parse(a, try c.encode(a, .{ .query = query, .chainId = chain, .registry = registry, .total = matched.items.len, .entries = matched.items[offset..@min(offset + count, matched.items.len)], .checkpoints = c.Value{ .object = checkpoints }, .cacheByDataset = try @import("cache_metadata.zig").datasets(a, "sqlite-cache", .{ .object = checkpoints }) }));
 }

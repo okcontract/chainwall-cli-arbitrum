@@ -6,10 +6,11 @@ const Error = t.Error;
 const Local = struct { name: []const u8, slot: usize, count: usize };
 pub const Generator = struct {
     builder: bc.Builder,
+    diagnostic: ?*t.Diagnostic = null,
     height: usize = 0,
     locals: std.ArrayList(Local) = .empty,
     fn set(g: *Generator, h: usize) Error!void {
-        if (h > 1024) return error.StackCapacity;
+        if (h > t.limits.stack_words) return error.StackCapacity;
         g.height = h;
     }
     fn push(g: *Generator, op: bc.Op) Error!void {
@@ -140,7 +141,7 @@ pub const Generator = struct {
         for (n.args, 0..) |arg, i| {
             starts[i] = cursor;
             if (arg.array) {
-                if (i >= 256) return error.InvalidArguments;
+                if (i >= t.limits.argument_mask_bits) return error.InvalidArguments;
                 kinds |= @as(u256, 1) << @intCast(i);
             } else if (t.effect(children[cursor])) effects += 1;
             cursor += arg.count;
@@ -178,6 +179,7 @@ pub const Generator = struct {
         try g.set(start + 1);
     }
     pub fn emit(g: *Generator, n: *Node, statement: bool, data: bool) Error!void {
+        errdefer if (g.diagnostic) |d| d.locate(n.span);
         const start = g.height;
         const c = n.children;
         switch (n.tag) {

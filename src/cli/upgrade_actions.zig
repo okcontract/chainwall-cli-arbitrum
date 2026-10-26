@@ -164,7 +164,7 @@ fn status(client: Client, id: c.Value) !c.Value {
 fn simulation(cast: *Cast, remote: *rpc.Rpc, transaction: c.Value) !c.Value {
     const a = cast.a;
     if (cast.from == null and cast.account == null and cast.keystore == null and cast.auth == null) return .null;
-    const from = try cast.signerAddress();
+    const from = try cast.callerAddress();
     const tx = try c.parse(a, try c.encode(a, .{ .from = from, .to = cast.instance, .data = c.field(transaction, "data").?, .value = "0x0" }));
     const result = remote.one("eth_call", try abi.array(a, &.{ tx, try remote.blockSelector() })) catch |err| {
         if (err != error.RpcRejectedRequest) return err;
@@ -256,7 +256,10 @@ pub fn run(cast: *Cast, registry: contracts.Catalog, profile: config.Profile, di
         const id: c.Value = .{ .string = try c.id(a, p[2]) };
         const client: Client = .{ .cast = cast, .cat = registry, .group = "registry" };
         const before = try status(client, id);
-        if (c.eq(u8, p[1], "status")) return before;
+        if (c.eq(u8, p[1], "status")) {
+            if (out) |file| try c.write(cast.io, file, try c.encode(a, before), false);
+            return before;
+        }
         if (try c.number(a, c.field(c.field(before, "action").?, "status").?) >= 4) return error.UpgradeActionAlreadyTerminal;
         const method = if (c.eq(u8, p[1], "approve")) "approveAction" else if (c.eq(u8, p[1], "execute")) "executeAction" else "cancelAction";
         var remote = try connection(cast, cast.instance);

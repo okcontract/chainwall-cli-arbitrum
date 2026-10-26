@@ -16,6 +16,9 @@ pub const Rpc = struct {
     requests: usize = 0,
     last_error: ?c.Value = null,
     timeout_seconds: u32 = 60,
+    read_attempts: u8 = 3,
+    retry_delay_ms: u32 = 100,
+    wire_attempts: usize = 0,
 
     pub fn init(a: c.A, io: std.Io, url: []const u8, chain: u64, address: []const u8) !Rpc {
         try c.address(address);
@@ -25,36 +28,87 @@ pub const Rpc = struct {
     }
     pub fn initEndpoint(a: c.A, io: std.Io, url: []const u8, chain: u64) !Rpc {
         if (url.len == 0) return error.RpcUrlRequired;
-        return .{ .a = a, .client = .{ .allocator = a, .io = io }, .url = url, .chain = chain, .address = "" };
+        return .{ .a = a, .client = .{ .allocator = std.heap.page_allocator, .io = io }, .url = url, .chain = chain, .address = "" };
     }
     pub fn deinit(r: *Rpc) void {
         r.client.deinit();
     }
     pub fn batch(r: *Rpc, requests: []const Request) ![]const c.Value {
+        return r.batchMode(requests, false);
+    }
+    /// Returns ordered JSON-RPC envelopes, including per-item errors. Only read
+    /// methods are allowed; malformed batch framing remains a process error.
+    pub fn settled(r: *Rpc, requests: []const Request) ![]const c.Value {
+        for (requests) |request| if (!readMethod(request.method)) return error.ReadOnlyBatchRequired;
+        return r.batchMode(requests, true);
+    }
+    fn batchMode(r: *Rpc, requests: []const Request, envelopes: bool) ![]const c.Value {
         r.last_error = null;
         const values = try r.a.alloc(c.Value, requests.len);
         var start: usize = 0;
         while (start < requests.len) {
             const end = @min(start + 100, requests.len);
-            var items = std.json.Array.init(r.a);
-            for (requests[start..end], 0..) |request, i| try items.append(try c.parse(r.a, try c.encode(r.a, .{ .jsonrpc = "2.0", .id = i + 1, .method = request.method, .params = request.params })));
-            const buffer = try std.heap.page_allocator.alloc(u8, 32 * 1024 * 1024);
-            defer std.heap.page_allocator.free(buffer);
-            var body: std.Io.Writer = .fixed(buffer);
-            const response = try @import("http.zig").fetchWithTimeout(&r.client, .{ .location = .{ .url = r.url }, .method = .POST, .payload = try c.encode(r.a, c.Value{ .array = items }), .extra_headers = &.{.{ .name = "Content-Type", .value = "application/json" }}, .response_writer = &body, .redirect_behavior = .unhandled }, r.timeout_seconds);
-            if (response.status != .ok) return error.RpcHttpFailure;
-            const decoded = try c.parse(r.a, body.buffered());
-            if (decoded == .array) for (decoded.array.items) |item| {
-                if (c.field(item, "error")) |failure| {
-                    r.last_error = failure;
-                    break;
-                }
-            };
-            try orderResponses(r.a, decoded, values[start..end]);
-            r.requests += end - start;
+            try r.chunk(requests[start..end], values[start..end], envelopes);
             start = end;
         }
         return values;
+    }
+    fn chunk(r: *Rpc, requests: []const Request, values: []c.Value, envelopes: bool) anyerror!void {
+        var read_only = true;
+        for (requests) |request| if (!readMethod(request.method)) {
+            read_only = false;
+            break;
+        };
+        var attempt: u8 = 0;
+        while (true) : (attempt += 1) {
+            r.exchange(requests, values, envelopes) catch |err| {
+                if (read_only and requests.len > 1 and err == error.RpcBatchTooLarge) {
+                    const middle = requests.len / 2;
+                    try r.chunk(requests[0..middle], values[0..middle], envelopes);
+                    try r.chunk(requests[middle..], values[middle..], envelopes);
+                    return;
+                }
+                if (read_only and attempt + 1 < @max(1, @min(r.read_attempts, 5)) and transient(err)) {
+                    try std.Io.sleep(r.client.io, .fromMilliseconds(@as(i64, r.retry_delay_ms) * (@as(i64, 1) << @intCast(attempt))), .awake);
+                    continue;
+                }
+                // A transport/server failure cannot prove a broadcast was rejected.
+                if (!read_only and (transient(err) or err == error.InvalidRpcBatch)) return error.RpcSubmissionOutcomeUnknown;
+                return if (err == error.RpcTransientHttpFailure) error.RpcHttpFailure else if (err == error.RpcRateLimited) error.RpcRejectedRequest else err;
+            };
+            r.last_error = null;
+            r.requests += requests.len;
+            return;
+        }
+    }
+    fn exchange(r: *Rpc, requests: []const Request, values: []c.Value, envelopes: bool) !void {
+        var scratch = std.heap.ArenaAllocator.init(r.a);
+        defer scratch.deinit();
+        const a = scratch.allocator();
+        var items = std.json.Array.init(a);
+        for (requests, 0..) |request, i| try items.append(try c.parse(a, try c.encode(a, .{ .jsonrpc = "2.0", .id = i + 1, .method = request.method, .params = request.params })));
+        const buffer = try std.heap.page_allocator.alloc(u8, 32 * 1024 * 1024);
+        defer std.heap.page_allocator.free(buffer);
+        var body: std.Io.Writer = .fixed(buffer);
+        r.wire_attempts += 1;
+        const response = try @import("http.zig").fetchWithTimeout(&r.client, .{ .location = .{ .url = r.url }, .method = .POST, .payload = try c.encode(a, c.Value{ .array = items }), .extra_headers = &.{.{ .name = "Content-Type", .value = "application/json" }}, .response_writer = &body, .redirect_behavior = .unhandled }, r.timeout_seconds);
+        const status = @backingInt(response.status);
+        if (status == 413) return error.RpcBatchTooLarge;
+        if (status == 408 or status == 429 or status == 500 or status == 502 or status == 503 or status == 504) return error.RpcTransientHttpFailure;
+        if (response.status != .ok) return error.RpcHttpFailure;
+        const decoded = try c.parse(a, body.buffered());
+        const responses = if (decoded == .array) decoded.array.items else &.{decoded};
+        for (responses) |item| if (c.field(item, "error")) |failure| {
+            if (envelopes and (c.field(item, "id") orelse .null) != .null) continue;
+            r.last_error = try c.parse(r.a, try c.encode(a, failure));
+            const message = try std.ascii.allocLowerString(a, c.string(c.field(failure, "message") orelse .null) catch "");
+            if (std.mem.indexOf(u8, message, "batch") != null and (std.mem.indexOf(u8, message, "limit") != null or std.mem.indexOf(u8, message, "large") != null or std.mem.indexOf(u8, message, "many") != null)) return error.RpcBatchTooLarge;
+            if (std.mem.indexOf(u8, message, "rate limit") != null or std.mem.indexOf(u8, message, "too many requests") != null or std.mem.indexOf(u8, message, "temporarily unavailable") != null) return error.RpcRateLimited;
+            return error.RpcRejectedRequest;
+        };
+        // Copy only a successful response into the caller's result allocator.
+        try orderMode(a, decoded, values, envelopes);
+        for (values) |*value| value.* = try c.parse(r.a, try c.encode(a, value.*));
     }
     pub fn one(r: *Rpc, method: []const u8, params: c.Value) !c.Value {
         return (try r.batch(&.{.{ .method = method, .params = params }}))[0];
@@ -141,6 +195,9 @@ pub fn integer(a: c.A, value: c.Value) !u64 {
     return std.math.cast(u64, try c.number(a, value)) orelse error.IndexTooLarge;
 }
 fn orderResponses(a: c.A, decoded: c.Value, values: []c.Value) !void {
+    return orderMode(a, decoded, values, false);
+}
+fn orderMode(a: c.A, decoded: c.Value, values: []c.Value, envelopes: bool) !void {
     if (decoded != .array or decoded.array.items.len != values.len) return error.InvalidRpcBatch;
     const seen = try a.alloc(bool, values.len);
     @memset(seen, false);
@@ -148,8 +205,11 @@ fn orderResponses(a: c.A, decoded: c.Value, values: []c.Value) !void {
         if (!c.eq(u8, try c.string(c.field(item, "jsonrpc") orelse return error.InvalidRpcBatch), "2.0")) return error.InvalidRpcBatch;
         const id = try integer(a, c.field(item, "id") orelse return error.InvalidRpcBatch);
         if (id == 0 or id > values.len or seen[id - 1]) return error.InvalidRpcBatch;
-        if (c.field(item, "error") != null) return error.RpcRejectedRequest;
-        values[id - 1] = c.field(item, "result") orelse return error.InvalidRpcBatch;
+        const failure = c.field(item, "error");
+        const result = c.field(item, "result");
+        if ((failure == null) == (result == null)) return error.InvalidRpcBatch;
+        if (!envelopes and failure != null) return error.RpcRejectedRequest;
+        values[id - 1] = if (envelopes) item else result.?;
         seen[id - 1] = true;
     }
 }
@@ -163,4 +223,15 @@ test "JSON RPC batch responses reorder by ID and reject duplicates and errors" {
     try std.testing.expectEqualStrings("a", try c.string(values[0]));
     try std.testing.expectError(error.InvalidRpcBatch, orderResponses(a, try c.parse(a, "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":0},{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":0}]"), &values));
     try std.testing.expectError(error.RpcRejectedRequest, orderResponses(a, try c.parse(a, "[{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{}}]"), values[0..1]));
+}
+
+fn readMethod(method: []const u8) bool {
+    for ([_][]const u8{ "eth_call", "eth_estimateGas", "eth_chainId", "eth_blockNumber", "eth_gasPrice", "eth_maxPriorityFeePerGas", "eth_getBalance", "eth_getCode", "eth_getStorageAt", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getTransactionCount", "eth_getLogs", "eth_getUserOperationReceipt", "eth_getUserOperationByHash", "eth_feeHistory" }) |name| if (c.eq(u8, method, name)) return true;
+    return false;
+}
+fn transient(err: anyerror) bool {
+    return switch (err) {
+        error.RpcTransientHttpFailure, error.RpcRateLimited, error.HttpRequestTimeout, error.ConnectionResetByPeer, error.ConnectionTimedOut, error.ConnectionRefused, error.ConnectionClosed, error.HttpConnectionClosing, error.TemporaryNameServerFailure, error.ReadFailed, error.WriteFailed, error.EndOfStream => true,
+        else => false,
+    };
 }

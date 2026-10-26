@@ -94,7 +94,16 @@ pub const Compiler = struct {
             break :blk try surface.preprocess(snapshot, settings);
         };
         if (!skip) settings = surface.settings;
-        var program = try artifact(compiler.a, path, source, core, settings);
+        var diagnostic: ms.Diagnostic = .{};
+        var program = artifactDetailed(compiler.a, path, source, core, settings, &diagnostic) catch |err| {
+            if (diagnostic.code.len > 0) compiler.cast.diagnostic = try c.encode(compiler.a, .{
+                .sourceFile = path,
+                .coordinateSpace = if (c.eq(u8, source, core)) "source" else "coreSource",
+                .diagnostic = diagnostic,
+                .expression = if (diagnostic.primary) |span| core[@min(span.start, core.len)..@min(span.end, core.len)] else "",
+            });
+            return err;
+        };
         if (!skip) try attachMetadata(compiler.a, &program, surface, snapshot);
         return program;
     }
@@ -211,7 +220,11 @@ pub fn attachMetadata(a: c.A, program: *c.Value, surface: Surface, snapshot: c.V
 
 /// Shared, exact compiler JSON for CLI publication and editor previews.
 pub fn artifact(a: c.A, path: []const u8, source: []const u8, core: []const u8, settings: ms.Settings) !c.Value {
-    const bytes = try ms.compile(a, core, settings);
+    var diagnostic: ms.Diagnostic = .{};
+    return artifactDetailed(a, path, source, core, settings, &diagnostic);
+}
+pub fn artifactDetailed(a: c.A, path: []const u8, source: []const u8, core: []const u8, settings: ms.Settings, diagnostic: *ms.Diagnostic) !c.Value {
+    const bytes = try ms.compileDetailed(a, core, settings, diagnostic);
     const recovered = try ms.decompile(a, bytes, settings);
     const refs = try ms.references.scan(a, bytes);
     const target_hashes = try a.alloc([]const u8, refs.targets.items.len);
