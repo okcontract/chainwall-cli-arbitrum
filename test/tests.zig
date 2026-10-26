@@ -138,7 +138,14 @@ fn allocationRoundTrip(a: std.mem.Allocator) !void {
     try std.testing.expectEqualSlices(u8, bytes, encoded);
 }
 test "public API handles every allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationRoundTrip, .{});
+    // Arena growth must make the same allocations on every failure sweep.
+    // SafeAllocator's resize/remap success depends on its current bucket fill.
+    const backing = std.testing.allocator;
+    var vtable = backing.vtable.*;
+    vtable.resize = std.mem.Allocator.noResize;
+    vtable.remap = std.mem.Allocator.noRemap;
+    const deterministic: std.mem.Allocator = .{ .ptr = backing.ptr, .vtable = &vtable };
+    try std.testing.checkAllAllocationFailures(deterministic, allocationRoundTrip, .{});
 }
 
 test "recursive instructions reject every truncated immediate" {

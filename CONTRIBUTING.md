@@ -39,6 +39,8 @@ Use a fresh prefix when changing the CLI/LSP selection to avoid stale files.
 `zig build test-package` uses `zig fetch` to produce the manifest-filtered source
 archive, extracts it, and runs default installation smoke checks from that source.
 This catches required assets omitted from `build.zig.zon`'s `.paths` list.
+The fetch uses an isolated cache under `TMPDIR` (or `/tmp`), which must be outside
+the checkout; the extracted build reuses the caller's compiler and dependency caches.
 CI runs native tests and installation smoke checks on macOS and Linux, checks
 archive extraction, and cross-builds x86_64/aarch64 Linux musl packages. Windows
 is not currently a release target. Cross-builds establish compilation, not runtime
