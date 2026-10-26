@@ -1,5 +1,9 @@
 # Chainwall CLI for Arbitrum
 
+**This repo contains preview software. It has not been audited, and is not considered
+safe for production use. Please contact us if you're interested in Chainwall using the
+form "Request Access" at [chainwall.org](https://chainwall.org).**
+
 Native tools for working with Chainwall Registry contracts, authoring interactions,
 and managing accounts on Arbitrum. The toolchain is written in Zig and includes
 a CLI, compiler, and language server. Select Arbitrum explicitly in your profile.
