@@ -13,7 +13,7 @@ pub fn main(init: std.process.Init) !void {
     const lsp = std.mem.eql(u8, args[3], "lsp");
     for ([_][]const u8{ "share/licenses/chainwall/LICENSE", "share/licenses/chainwall/THIRD_PARTY_NOTICES.md" }) |path| try require(init.io, a, prefix, path);
     if (cli or lsp) {
-        for ([_][]const u8{ "README.md", "CLI.md", "MANUAL.md", "manual.md", "LSP.md", "COMPILER.md", "skills/chainwall-operations/SKILL.md", "skills/chainwall-operations/agents/openai.yaml" }) |path| try require(init.io, a, prefix, try a.print("share/doc/chainwall/{s}", .{path}));
+        for ([_][]const u8{ "README.md", "CHANGELOG.md", "CLI.md", "MANUAL.md", "manual.md", "LSP.md", "COMPILER.md", "skills/chainwall-operations/SKILL.md", "skills/chainwall-operations/agents/openai.yaml" }) |path| try require(init.io, a, prefix, try a.print("share/doc/chainwall/{s}", .{path}));
         try require(init.io, a, prefix, "share/licenses/chainwall/zqlite.txt");
     }
     if (cli) {
@@ -24,7 +24,7 @@ pub fn main(init: std.process.Init) !void {
     for ([_]struct { name: []const u8, enabled: bool }{ .{ .name = "chainwall", .enabled = cli }, .{ .name = "chainwall-lsp", .enabled = lsp } }) |item| {
         if (!item.enabled) continue;
         const output = try std.process.run(a, init.io, .{ .argv = &.{ try std.Io.Dir.path.join(a, &.{ prefix, "bin", item.name }), "--version" }, .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(10) } } });
-        if (output.term != .exited or output.term.exited != 0 or std.mem.indexOf(u8, output.stdout, "0.3.0") == null) return error.VersionSmokeFailed;
+        if (output.term != .exited or output.term.exited != 0 or std.mem.indexOf(u8, output.stdout, "0.3.1") == null) return error.VersionSmokeFailed;
     }
     // Compile through stdin using a real file, without depending on a shell.
     const source = try a.print("{s}/smoke-input.ls", .{prefix});

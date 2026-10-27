@@ -19,7 +19,7 @@ hotnotes:
 For completion, diagnostics, and native compilation while editing `.ls` files, see the
 companion [Lambdascript editor guide](LSP.md) for `chainwall-lsp`.
 
-For `chainwall` 0.3.0. This manual is for people using a distributed binary.
+For `chainwall` 0.3.1. This manual is for people using a distributed binary.
 The examples use installed commands and ordinary files.
 
 Chainwall manages who may perform onchain actions, which contracts and tokens those

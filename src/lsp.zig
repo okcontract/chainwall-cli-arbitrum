@@ -41,7 +41,7 @@ fn start(init: std.process.Init) !u8 {
         return 0;
     }
     if (args.flag("version")) {
-        try std.Io.File.stdout().writeStreamingAll(init.io, "chainwall-lsp 0.3.0\n");
+        try std.Io.File.stdout().writeStreamingAll(init.io, "chainwall-lsp 0.3.1\n");
         return 0;
     }
     if (args.positional.len > 0) return error.InvalidArguments;

@@ -159,7 +159,7 @@ pub const Renderer = struct {
         try r.out.writer.writeByte('\n');
     }
     pub fn version(r: *Renderer) !void {
-        try r.brand("0.3.0 (Zig 0.17)");
+        try r.brand("0.3.1 (Zig 0.17)");
     }
     fn width(rows: []const Row) usize {
         var result: usize = 0;

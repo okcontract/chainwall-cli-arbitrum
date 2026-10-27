@@ -11,8 +11,8 @@ test "standalone command validation and help never wait for stdin" {
         .{ .args = &.{"--help"}, .code = 0, .expected = "Usage:" },
         .{ .args = &.{"-h"}, .code = 0, .expected = "Usage:" },
         .{ .args = &.{ "compile", "--help" }, .code = 0, .expected = "Usage:" },
-        .{ .args = &.{"--version"}, .code = 0, .expected = "miniscript 0.3.0" },
-        .{ .args = &.{"-V"}, .code = 0, .expected = "miniscript 0.3.0" },
+        .{ .args = &.{"--version"}, .code = 0, .expected = "miniscript 0.3.1" },
+        .{ .args = &.{"-V"}, .code = 0, .expected = "miniscript 0.3.1" },
     };
     for (cases) |case| {
         var child = try std.process.spawn(io, .{

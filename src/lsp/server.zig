@@ -271,7 +271,7 @@ pub const Server = struct {
                 for (folders.array.items) |folder| try s.addFolder(try p.string(p.field(folder, "uri")));
             } else if (p.field(params, "rootUri") == .string) try s.addFolder(p.field(params, "rootUri").string);
             s.initialized = true;
-            return try p.json(a, .{ .serverInfo = .{ .name = "chainwall-lsp", .version = "0.3.0" }, .capabilities = .{
+            return try p.json(a, .{ .serverInfo = .{ .name = "chainwall-lsp", .version = "0.3.1" }, .capabilities = .{
                 .positionEncoding = if (s.encoding == .utf8) "utf-8" else "utf-16",
                 .textDocumentSync = .{ .openClose = true, .change = 2, .save = .{ .includeText = false } },
                 .completionProvider = .{ .triggerCharacters = .{ "@", ".", "(", "/", "$" }, .resolveProvider = false },

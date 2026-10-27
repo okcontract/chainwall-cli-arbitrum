@@ -59,6 +59,7 @@ encoding, JSON decoding, and required send/sign options. Both bare JSON results
 and version-1 Foundry JSON envelopes are accepted. Other releases must pass the
 local probes; this does not replace testing their signing workflows.
 
+- [Changelog](CHANGELOG.md)
 - [CLI manual](MANUAL.md) and [command/developer reference](CLI.md)
 - [Compiler and library](COMPILER.md)
 - [Language server reference](LSP.md)

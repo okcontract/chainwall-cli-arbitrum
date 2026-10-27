@@ -79,7 +79,7 @@ pub fn build(b: *std.Build) void {
         // filename used by links in the companion guides.
         b.getInstallStep().dependOn(&b.addInstallFile(b.path("MANUAL.md"), "share/doc/chainwall/manual.md").step);
         b.getInstallStep().dependOn(&b.addInstallFile(b.path("MANUAL.md"), "share/doc/chainwall/MANUAL.md").step);
-        for ([_][]const u8{ "README.md", "CONTRIBUTING.md", "CLI.md", "COMPILER.md", "LSP.md", "LICENSE", "THIRD_PARTY_NOTICES.md" }) |file| {
+        for ([_][]const u8{ "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "CLI.md", "COMPILER.md", "LSP.md", "LICENSE", "THIRD_PARTY_NOTICES.md" }) |file| {
             b.getInstallStep().dependOn(&b.addInstallFile(b.path(file), b.fmt("share/doc/chainwall/{s}", .{file})).step);
         }
         b.getInstallStep().dependOn(&b.addInstallDirectory(.{
