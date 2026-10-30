@@ -1693,7 +1693,7 @@ pub fn main(init: std.process.Init) void {
     defer arena.deinit();
     var failure: @import("errors.zig").Context = .{};
     start(init, arena.allocator(), &failure) catch |err| {
-        const message = if (err == error.UnknownOption) failure.detail orelse errorMessage(err) orelse @errorName(err) else errorMessage(err) orelse @errorName(err);
+        const message = (if (err == error.UnknownOption) failure.detail else null) orelse errorMessage(err) orelse @errorName(err);
         if (failure.json) {
             const encoded = failure.encode(arena.allocator(), err, message) catch "{\"schemaVersion\":1,\"ok\":false,\"error\":{\"code\":\"OutOfMemory\"}}";
             std.Io.File.stderr().writeStreamingAll(init.io, encoded) catch {};
