@@ -104,6 +104,20 @@ an admin signer, then check `terms instance-has-accepted-initial-terms`.
 The CLI verifies SHA-256 document identity. Do not use legacy current-version
 terms commands or assume deployment accepted the terms.
 
+After acceptance, configure and verify native USD pricing with the tenant's
+authorized administrator:
+
+```sh
+chainwall tokens set-chainlink-native-feed --dry-run
+chainwall tokens set-chainlink-native-feed --account administrator
+chainwall tokens get-native-usd-feed-config
+```
+
+Review the preset's feed, age and sequencer checks before submitting. Governance
+may queue the change; verify that the configured feed is nonzero after execution.
+Until then, native balances remain visible but their USD values are null with
+`NativePriceFeedNotConfigured` and a recovery command.
+
 ## Users, policies, and managed vaults
 
 Use Foundry keystore names with `--account`; import keys interactively through
