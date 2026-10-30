@@ -45,19 +45,22 @@ pub const Cast = struct {
             return err;
         };
         if (output.term != .exited or output.term.exited != 0) {
-            s.diagnostic = try s.redact(output.stderr);
+            s.diagnostic = try s.failureDiagnostic(output.stderr);
             return error.CastFailed;
         }
         const raw = c.trim(output.stdout);
         for (args) |arg| if (c.eq(u8, arg, "--json")) {
             const result = try @import("foundry_output.zig").unwrap(s.a, try c.parse(s.a, raw));
             if (!result.success) {
-                s.diagnostic = try s.redact(raw);
+                s.diagnostic = try s.failureDiagnostic(raw);
                 return error.FoundryReportedFailure;
             }
             return c.encode(s.a, result.value);
         };
         return raw;
+    }
+    fn failureDiagnostic(s: *Cast, text: []const u8) ![]const u8 {
+        return s.redact(try @import("revert_errors.zig").describe(s.a, try s.redact(text)));
     }
     fn redact(s: *Cast, text: []const u8) ![]const u8 {
         // RPC URLs can carry provider credentials. Never copy them into errors.
@@ -282,7 +285,11 @@ pub const Cast = struct {
         try submission.object.put(s.a, "receipt", receipt);
         if (s.journal) |journal| try journal.updateSubmission(submission_index.?, submission);
         try s.recordReceipt(receipt);
-        if (c.field(receipt, "transactionHash")) |hash| try s.showTransaction(c.string(hash) catch "");
+        // A repriced transaction has its own hash; suppress only repeated links.
+        if (c.field(receipt, "transactionHash")) |hash| {
+            const receipt_hash = c.string(hash) catch "";
+            if (parsed != .string or !std.ascii.eqlIgnoreCase(parsed.string, receipt_hash)) try s.showTransaction(receipt_hash);
+        }
         if (failed) return error.TransactionFailed;
         const status = c.field(receipt, "status") orelse return error.InvalidTransactionReceipt;
         if (try c.number(s.a, status) != 1) return error.TransactionReverted;
@@ -304,4 +311,18 @@ test "read-only caller accepts from without granting signing capability" {
     try std.testing.expectError(error.InvalidAddress, cast.callerAddress());
     cast.from = null;
     try std.testing.expectError(error.SignerRequired, cast.callerAddress());
+}
+
+test "decoding an ABI string cannot reintroduce an RPC credential into diagnostics" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    var cast: Cast = .{ .a = a, .io = std.testing.io, .env = &env, .rpc = "https://provider.example/secret-key" };
+    const abi = @import("abi_codec.zig");
+    const encoded = try abi.hex(a, try abi.encode(a, try c.parse(a, "[{\"name\":\"reason\",\"type\":\"string\"}]"), try abi.array(a, &.{.{ .string = cast.rpc }})));
+    const diagnostic = try cast.failureDiagnostic(try a.print("execution reverted: 0x08c379a0{s}", .{encoded[2..]}));
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic, "secret-key") == null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic, "<rpc-url>") != null);
 }

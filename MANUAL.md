@@ -321,6 +321,22 @@ for the selected chain.
 (chain ID `42161`), including `kv create`. Other chains require an explicit factory
 address.
 
+If you need native asset USD valuation, configure a price feed after accepting
+the initial terms as described in [Inspect and accept terms](#inspect-and-accept-terms).
+Use an authorized administrator:
+
+```sh
+chainwall tokens set-chainlink-native-feed --dry-run
+chainwall tokens set-chainlink-native-feed --account admin
+chainwall tokens get-native-usd-feed-config
+```
+
+The preset checks the Arbitrum feed and sequencer configuration before building
+the governance calls. Verify the applied configuration before relying on native
+asset valuations. This setup is optional for deployment and native balance reads;
+a zero feed returns `NativePriceFeedNotConfigured` in
+`accounts assets` or `safes assets` with these recovery commands.
+
 ## 4. Profiles and configuration
 
 ### Exchange configuration with the app
@@ -1517,11 +1533,17 @@ codehash, binding, or runtime authorization can make the action stale.
 
 ```sh
 chainwall terms get-terms-context
-chainwall terms document --document-file terms.md
+chainwall terms document --out terms.md
 chainwall terms accept-terms --document-file terms.md --dry-run
 chainwall terms accept-terms --document-file terms.md --account admin
 chainwall terms instance-has-accepted-initial-terms
 ```
+
+The first `terms document --out` fetches and verifies the document before saving
+it. To use another IPFS gateway, add `--ipfs-gateway https://YOUR_GATEWAY/ipfs`
+to that command, for example if the default gateway returns HTTP 429.
+`--document-file terms.md` verifies an existing local copy; use it after download
+when previewing or submitting acceptance.
 
 The Registry stores its factory's initial document once. The argument-free shortcut
 captures that URI/digest, verifies the exact document bytes with SHA-256, and submits

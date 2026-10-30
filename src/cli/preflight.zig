@@ -2,54 +2,19 @@ const std = @import("std");
 const c = @import("common.zig");
 const abi = @import("abi_codec.zig");
 const rpc = @import("rpc.zig");
-const ms = @import("miniscript");
 const contracts = @import("contracts.zig");
 const Cast = @import("cast.zig").Cast;
 const Client = @import("contract_client.zig").Client;
 const Args = @import("args.zig").Args;
 
-fn revertData(value: c.Value, depth: u8) ?[]const u8 {
-    if (depth > 8) return null;
-    if (value == .string) return if (std.mem.startsWith(u8, value.string, "0x")) value.string else null;
-    for ([_][]const u8{ "data", "originalError", "error" }) |key| if (c.field(value, key)) |inner| if (revertData(inner, depth + 1)) |data| return data;
-    return null;
-}
-
-fn decodeError(a: c.A, cat: contracts.Catalog, failure: c.Value) !c.Value {
-    const data = revertData(failure, 0) orelse return .null;
-    const unknown = try c.parse(a, try c.encode(a, .{ .decoded = false, .rawData = data }));
-    const bytes = abi.unhex(a, data) catch return unknown;
-    if (bytes.len < 4) return unknown;
-    for (c.field(cat.root, "contracts").?.array.items) |contract| for (c.field(c.field(contract, "artifact").?, "abi").?.array.items) |item| {
-        if (!c.eq(u8, c.string(c.field(item, "type") orelse .null) catch "", "error")) continue;
-        const signature = try contracts.signature(a, item, false);
-        if (@as(u32, @intCast(ms.bytecode.hash(signature) >> 224)) != std.mem.readInt(u32, bytes[0..4], .big)) continue;
-        const values = abi.decode(a, c.field(item, "inputs").?, bytes[4..]) catch return unknown;
-        return c.parse(a, try c.encode(a, .{ .decoded = true, .rawData = data, .name = c.field(item, "name").?, .signature = signature, .args = values, .namedArgs = try abi.named(a, c.field(item, "inputs").?, values) }));
-    };
-    return unknown;
-}
-
-test "unrecognized and malformed revert payloads retain raw provider data" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const cat = try contracts.Catalog.load(a);
-    for ([_][]const u8{ "0xdeadbeef1234", "0x12", "0xnothex" }) |data| {
-        const decoded = try decodeError(a, cat, try c.parse(a, try c.encode(a, .{ .data = .{ .originalError = .{ .data = data } } })));
-        try std.testing.expectEqualStrings(data, try c.string(c.field(decoded, "rawData").?));
-        try std.testing.expect(!c.field(decoded, "decoded").?.bool);
-    }
-}
-
-fn call(remote: *rpc.Rpc, cat: contracts.Catalog, tx: c.Value, from: []const u8) !c.Value {
+fn call(remote: *rpc.Rpc, tx: c.Value, from: []const u8) !c.Value {
     const a = remote.a;
     try c.address(from);
     const wire = try c.parse(a, try c.encode(a, .{ .from = from, .to = c.field(tx, "to").?, .data = c.field(tx, "data").?, .value = try a.print("0x{x}", .{try c.number(a, c.field(tx, "value") orelse c.Value{ .string = "0" })}) }));
     const result = remote.one("eth_call", try abi.array(a, &.{ wire, try remote.blockSelector() })) catch |err| {
         if (err != error.RpcRejectedRequest) return err;
         const failure = remote.last_error orelse return err;
-        return c.parse(a, try c.encode(a, .{ .ok = false, .transaction = wire, .block = remote.block, .rpcError = failure, .revert = try decodeError(a, cat, failure) }));
+        return c.parse(a, try c.encode(a, .{ .ok = false, .transaction = wire, .block = remote.block, .rpcError = failure, .revert = c.field(failure, "detail") orelse .null }));
     };
     return c.parse(a, try c.encode(a, .{ .ok = true, .transaction = wire, .block = remote.block, .result = result }));
 }
@@ -68,7 +33,7 @@ pub fn operation(client: Client, registry: []const u8, args: *Args, file: []cons
     const from = try cast.callerAddress();
     const prepared = try @import("operation_actions.zig").execute(client, args, file, "execute", true);
     const transaction = c.field(prepared, "transaction") orelse prepared;
-    var result = try call(&remote, client.cat, transaction, from);
+    var result = try call(&remote, transaction, from);
     // Safe may return false without reverting its outer call.
     if (c.field(prepared, "safeNonce") != null and c.field(result, "ok").?.bool) {
         const method = try client.cat.find("safe", "execTransaction");
@@ -106,11 +71,11 @@ pub fn policyInput(client: Client, registry: []const u8, input: c.Value, out: ?[
     try client.boundInteract(registry);
     // The protocol always reverts, including success, rolling back all effects.
     // Match the app's sender and decode the generated ABI's success sentinel.
-    var result = try call(&remote, client.cat, transaction, cast.instance);
+    var result = try call(&remote, transaction, cast.instance);
     var accepted = false;
     const reverted = c.field(result, "revert") orelse c.Value.null;
     const name = c.string(c.field(reverted, "name") orelse .null) catch "";
-    if (!c.field(result, "ok").?.bool and c.eq(u8, name, "PolicyProgramSimulationResult")) {
+    if (!c.field(result, "ok").?.bool and c.eq(u8, name, "PolicyProgramSimulationResult") and (c.field(reverted, "decoded") orelse c.Value{ .bool = false }).bool) {
         const top = c.field(c.field(reverted, "namedArgs").?, "stackTop").?;
         accepted = try c.number(a, top) != 0;
         try result.object.put(a, "stackTop", top);

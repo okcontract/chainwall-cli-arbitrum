@@ -6,14 +6,28 @@ pub fn main(init: std.process.Init) !void {
     const argv = try init.minimal.args.toSlice(a);
     if (argv.len < 2) return error.MissingCommand;
     const command = argv[1];
+    if (std.mem.eql(u8, command, "call") and std.mem.endsWith(u8, option(argv, "--rpc-url") orelse "", "/fixture-revert")) {
+        try std.Io.File.stderr().writeStreamingAll(init.io, try std.fmt.allocPrint(a, "execution reverted: custom error 0xbed8168a at {s}\n", .{option(argv, "--rpc-url").?}));
+        return error.FixtureReadReverted;
+    }
+    if (std.mem.eql(u8, command, "send") and argv.len == 3 and std.mem.eql(u8, argv[2], "--help")) {
+        if (init.environ_map.get("NO_COLOR") == null or init.environ_map.get("CLICOLOR_FORCE") != null or init.environ_map.get("FORCE_COLOR") != null) return error.FixtureHelpRequiresNoColor;
+        const legacy = init.environ_map.get("CHAINWALL_TEST_LEGACY_CAST") != null;
+        try std.Io.File.stdout().writeStreamingAll(init.io, if (legacy) "--async --nonce --unlocked --gas-limit --priority-gas-price --data-file" else "--data --async --nonce --unlocked --gas-limit --priority-gas-price");
+        return;
+    }
     if (std.mem.eql(u8, command, "send") and !(argv.len == 3 and std.mem.eql(u8, argv[2], "--help"))) {
         const from = option(argv, "--from") orelse return error.FixtureEnvelopeMismatch;
         const nonce = option(argv, "--nonce") orelse return error.FixtureEnvelopeMismatch;
         if (!std.mem.eql(u8, from, "0x6666666666666666666666666666666666666666") or !std.mem.eql(u8, nonce, "5")) return error.FixtureEnvelopeMismatch;
+        if (init.environ_map.get("CHAINWALL_TEST_MINED_SEND") != null) {
+            try std.Io.File.stdout().writeStreamingAll(init.io, "0x0000000000000000000000000000000000000000000000000000000000000001");
+            return;
+        }
         return error.FixtureBroadcastStopped;
     }
     const output =
-        if (std.mem.eql(u8, command, "--version")) "cast Version: 1.8.6-test\n" else if (std.mem.eql(u8, command, "calldata")) "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001" else if (std.mem.eql(u8, command, "send") and argv.len == 3 and std.mem.eql(u8, argv[2], "--help")) "--async --nonce --unlocked --gas-limit --priority-gas-price" else if (std.mem.eql(u8, command, "wallet") and argv.len == 4 and std.mem.eql(u8, argv[3], "--help")) "--data --account --keystore --password-file" else if (std.mem.eql(u8, command, "wallet") and argv.len >= 3 and std.mem.eql(u8, argv[2], "address")) "0x6666666666666666666666666666666666666666" else if (std.mem.eql(u8, command, "chain-id")) "42161" else if (std.mem.eql(u8, command, "code")) "0x6000" else if (std.mem.eql(u8, command, "call")) "0x00" else if (std.mem.eql(u8, command, "decode-abi")) blk: {
+        if (std.mem.eql(u8, command, "--version")) "cast Version: 1.8.6-test\n" else if (std.mem.eql(u8, command, "calldata")) "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001" else if (std.mem.eql(u8, command, "wallet") and argv.len == 4 and std.mem.eql(u8, argv[3], "--help")) "--data --account --keystore --password-file" else if (std.mem.eql(u8, command, "wallet") and argv.len >= 3 and std.mem.eql(u8, argv[2], "address")) "0x6666666666666666666666666666666666666666" else if (std.mem.eql(u8, command, "chain-id")) "42161" else if (std.mem.eql(u8, command, "code")) "0x6000" else if (std.mem.eql(u8, command, "call")) "0x00" else if (std.mem.eql(u8, command, "decode-abi")) blk: {
             const signature = argv[2];
             const name = signature[0 .. std.mem.indexOfScalar(u8, signature, '(') orelse return error.InvalidSignature];
             const fixtures = .{

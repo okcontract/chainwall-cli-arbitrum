@@ -833,6 +833,7 @@ const App = struct {
         const actions = @import("account_actions.zig");
         const is_safe = c.eq(u8, p[0], "safes");
         const creating = c.eq(u8, p[1], "create");
+        if (!creating and p.len == 2) return error.AddressArgumentRequired;
         if (p.len != @as(usize, if (creating) 2 else 3)) return error.WrongArgumentCount;
         const address = if (creating) "" else try app.reference(if (is_safe) "safes" else "accounts", p[2], true);
         const registry = app.cast.instance;
@@ -1235,7 +1236,7 @@ const App = struct {
         var live = false;
         // Validate before any RPC or cache access; inspect consumes these options.
         for (app.args.options) |option| if (!option.used) {
-            if (!selected("settings,no-preprocess,offline,live,snapshot,abi,optimization,argument-context", option.key)) return error.UnknownOption;
+            if (!selected("settings,no-preprocess,offline,live,snapshot,abi,optimization,argument-context", option.key)) return app.args.reject(option.key);
             if (c.eq(u8, option.key, "offline")) offline = true;
             if (c.eq(u8, option.key, "live")) live = true;
         };
@@ -1692,15 +1693,16 @@ pub fn main(init: std.process.Init) void {
     defer arena.deinit();
     var failure: @import("errors.zig").Context = .{};
     start(init, arena.allocator(), &failure) catch |err| {
+        const message = (if (err == error.UnknownOption) failure.detail else null) orelse errorMessage(err) orelse @errorName(err);
         if (failure.json) {
-            const encoded = failure.encode(arena.allocator(), err, errorMessage(err) orelse @errorName(err)) catch "{\"schemaVersion\":1,\"ok\":false,\"error\":{\"code\":\"OutOfMemory\"}}";
+            const encoded = failure.encode(arena.allocator(), err, message) catch "{\"schemaVersion\":1,\"ok\":false,\"error\":{\"code\":\"OutOfMemory\"}}";
             std.Io.File.stderr().writeStreamingAll(init.io, encoded) catch {};
             std.Io.File.stderr().writeStreamingAll(init.io, "\n") catch {};
             std.process.exit(1);
         }
         var buffer: [1024]u8 = undefined;
         var stderr = std.Io.File.stderr().writerStreaming(init.io, &buffer);
-        stderr.interface.print("chainwall: {s}\n", .{errorMessage(err) orelse @errorName(err)}) catch {};
+        stderr.interface.print("chainwall: {s}\n", .{message}) catch {};
         stderr.interface.writeAll("Use chainwall --help or chainwall <group> <method> --help.\n") catch {};
         stderr.interface.flush() catch {};
         std.process.exit(1);
@@ -1842,6 +1844,7 @@ fn errorMessage(err: anyerror) ?[]const u8 {
         error.InteractionMissingUseAdd => "This interaction does not exist. Use interactions add.",
         error.ExpectedLambdascriptFile => "Lambdascript source must be an individual .ls file.",
         error.UnknownOption => "Unknown or inapplicable option. Check the command's --help.",
+        error.AddressArgumentRequired => "Missing ADDRESS argument. Use this command's --help for usage.",
         error.NotAChainwallRegistryOrInstance => "Address is neither a Chainwall Registry nor a SafeFactory instance.",
         error.NotAChainwallRegistry => "Address is not a Chainwall Registry.",
         error.NotAChainwallInteract => "Instance does not point to a Chainwall Interact contract.",
@@ -1884,7 +1887,13 @@ fn start(init: std.process.Init, a: c.A, failure: *@import("errors.zig").Context
         if (c.eq(u8, arg, "--json")) failure.json = true;
     }
     var args = try Args.parse(a, argv.items);
+    errdefer if (args.rejected) |key| {
+        failure.field = a.print("--{s}", .{key}) catch null;
+        const invocation = if (c.eq(u8, failure.command, "chainwall")) "chainwall" else a.print("chainwall {s}", .{failure.command}) catch "chainwall";
+        failure.detail = a.print("--{s} is not accepted by {s}. Run {s} --help.", .{ key, failure.command, invocation }) catch null;
+    };
     if (args.positional.len > 0 and config.validName(args.positional[0])) failure.command = args.positional[0];
+    if (args.positional.len > 1 and c.eq(u8, args.positional[0], "schemas") and @import("schema.zig").contains("list show template validate", args.positional[1])) failure.command = try a.print("schemas {s}", .{args.positional[1]});
     for (@import("schema.zig").commands) |entry| {
         var words = std.mem.splitScalar(u8, entry.path, ' ');
         var count: usize = 0;
@@ -1906,6 +1915,11 @@ fn start(init: std.process.Init, a: c.A, failure: *@import("errors.zig").Context
     };
     const profile = try config.loadForCommand(a, init.io, dir, profile_name, args.positional);
     const catalog = try contracts.Catalog.load(a);
+    if (args.positional.len > 1 and config.validName(args.positional[0]) and config.validName(args.positional[1]) and failure.command.len <= args.positional[0].len) {
+        if (catalog.find(args.positional[0], alias(args.positional[0], args.positional[1]))) |_| {
+            failure.command = try a.print("{s} {s}", .{ args.positional[0], args.positional[1] });
+        } else |_| {}
+    }
     if (json_inputs.peek(args, "via") != null and !@import("schema.zig").acceptsRoute(args.positional)) return error.ExecutionRouteNotApplicable;
     if (json_inputs.peek(args, "estimate") != null and json_inputs.peek(args, "help") == null and json_inputs.peek(args, "version") == null) try requireEstimateCommand(catalog, args.positional);
     const interactive = args.flag("interactive");
@@ -1993,6 +2007,7 @@ fn start(init: std.process.Init, a: c.A, failure: *@import("errors.zig").Context
     app.run() catch |err| {
         failure.recovery(a, journal) catch {};
         failure.detail = app.cast.diagnostic;
+        args.rejected = app.args.rejected;
         journal.finish(err) catch |log_err| {
             try std.Io.File.stderr().writeStreamingAll(init.io, try a.print("Could not update transaction log: {s}\n", .{@errorName(log_err)}));
         };
@@ -2092,4 +2107,16 @@ test "inapplicable estimation cannot mutate profiles or configuration" {
 
 test {
     _ = @import("effective_config.zig");
+}
+
+test "missing account and Safe addresses fail before topology or ABI lookup" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    var app: App = .{ .a = a, .io = std.testing.io, .env = &env, .dir = "", .profile_name = "default", .profile = .{}, .cat = try contracts.Catalog.load(a), .cast = .{ .a = a, .io = std.testing.io, .env = &env }, .args = try Args.parse(a, &.{}), .chain = "arbitrum", .json = true, .dry = false };
+    for ([_][]const u8{ "safes", "accounts" }) |group| {
+        try std.testing.expectError(error.AddressArgumentRequired, app.accountCommand(&.{ group, "inspect" }));
+    }
 }
