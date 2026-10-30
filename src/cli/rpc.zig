@@ -232,7 +232,7 @@ test "RPC contract failures keep provider payloads alongside decoded details" {
     defer arena.deinit();
     const a = arena.allocator();
     const mock = @import("test_rpc.zig");
-    const failure = .{ .code = -32000, .message = "execution reverted", .data = "0xbed8168a" };
+    const failure = .{ .code = -32000, .message = "execution reverted", .data = "0xbed8168a", .detail = "provider metadata" };
     var server = try mock.Server.init(std.testing.io, &.{.{ .body = try c.encode(a, .{.{ .jsonrpc = "2.0", .id = 1, .@"error" = failure }}) }});
     defer server.deinit();
     var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});

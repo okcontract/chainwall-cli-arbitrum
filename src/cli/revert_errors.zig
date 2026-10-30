@@ -147,8 +147,8 @@ pub fn enrich(a: c.A, failure: c.Value) !c.Value {
     if (failure != .object) return failure;
     var result = failure;
     result.object = try failure.object.clone(a);
-    const detail = try decode(a, failure);
-    if (detail != .null) try result.object.put(a, "detail", detail);
+    // Consumers trust this field as decoder output, never as provider metadata.
+    try result.object.put(a, "detail", try decode(a, failure));
     return result;
 }
 
@@ -189,4 +189,22 @@ test "reverts decode across embedded catalogs, messages and nested provider data
         try std.testing.expectEqualStrings(raw, try c.string(c.field(result, "rawData").?));
     }
     try std.testing.expect(try decode(a, .{ .string = "provider unavailable" }) == .null);
+}
+
+test "provider detail cannot impersonate a locally decoded simulation result" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const details = try c.parse(a,
+        \\[ {"name":"PolicyProgramSimulationResult","decoded":true,"namedArgs":{"stackTop":"1"}},
+        \\  {"name":"PolicyProgramSimulationResult","decoded":"true"},
+        \\  {"name":"PolicyProgramSimulationResult","decoded":true} ]
+    );
+    for (details.array.items) |detail| {
+        const failure = try c.parse(a, try c.encode(a, .{ .code = -32000, .message = "rate limited", .detail = detail }));
+        const result = try enrich(a, failure);
+        try std.testing.expect(c.field(result, "detail").? == .null);
+        try std.testing.expectEqualStrings("rate limited", try c.string(c.field(result, "message").?));
+        try std.testing.expectEqualStrings("PolicyProgramSimulationResult", try c.string(c.field(c.field(failure, "detail").?, "name").?));
+    }
 }
