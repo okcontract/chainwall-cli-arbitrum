@@ -101,7 +101,7 @@ pub const Rpc = struct {
         const responses = if (decoded == .array) decoded.array.items else &.{decoded};
         for (responses) |item| if (c.field(item, "error")) |failure| {
             if (envelopes and (c.field(item, "id") orelse .null) != .null) continue;
-            r.last_error = try c.parse(r.a, try c.encode(a, failure));
+            r.last_error = try @import("revert_errors.zig").enrich(r.a, try c.parse(r.a, try c.encode(a, failure)));
             const message = try std.ascii.allocLowerString(a, c.string(c.field(failure, "message") orelse .null) catch "");
             if (std.mem.indexOf(u8, message, "batch") != null and (std.mem.indexOf(u8, message, "limit") != null or std.mem.indexOf(u8, message, "large") != null or std.mem.indexOf(u8, message, "many") != null)) return error.RpcBatchTooLarge;
             if (std.mem.indexOf(u8, message, "rate limit") != null or std.mem.indexOf(u8, message, "too many requests") != null or std.mem.indexOf(u8, message, "temporarily unavailable") != null) return error.RpcRateLimited;
@@ -225,6 +225,27 @@ test "JSON RPC batch responses reorder by ID and reject duplicates and errors" {
     try std.testing.expectEqualStrings("a", try c.string(values[0]));
     try std.testing.expectError(error.InvalidRpcBatch, orderResponses(a, try c.parse(a, "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":0},{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":0}]"), &values));
     try std.testing.expectError(error.RpcRejectedRequest, orderResponses(a, try c.parse(a, "[{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{}}]"), values[0..1]));
+}
+
+test "RPC contract failures keep provider payloads alongside decoded details" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const mock = @import("test_rpc.zig");
+    const failure = .{ .code = -32000, .message = "execution reverted", .data = "0xbed8168a" };
+    var server = try mock.Server.init(std.testing.io, &.{.{ .body = try c.encode(a, .{.{ .jsonrpc = "2.0", .id = 1, .@"error" = failure }}) }});
+    defer server.deinit();
+    var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+    defer _ = serving.cancel(std.testing.io) catch {};
+    var remote = try Rpc.initEndpoint(a, std.testing.io, try server.url(a), 42161);
+    defer remote.deinit();
+    try std.testing.expectError(error.RpcRejectedRequest, remote.one("eth_call", try abi.array(a, &.{})));
+    const result = remote.last_error.?;
+    try std.testing.expectEqualStrings(failure.data, try c.string(c.field(result, "data").?));
+    try std.testing.expectEqualStrings(failure.message, try c.string(c.field(result, "message").?));
+    try std.testing.expectEqualStrings("InvalidFeedConfiguration", try c.string(c.field(c.field(result, "detail").?, "name").?));
+    try serving.await(std.testing.io);
+    try std.testing.expectEqual(@as(usize, 1), server.requests);
 }
 
 fn readMethod(method: []const u8) bool {

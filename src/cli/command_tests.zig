@@ -88,6 +88,27 @@ test "RPC chain mismatch reaches human and JSON command errors" {
     }
 }
 
+test "captured contract errors are decoded and redacted in human and JSON output" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    for ([_]bool{ false, true }) |json| {
+        const result = try runWithFormat(a, dir, "https://provider.example/secret-key/fixture-revert", &.{ "registry", "paused" }, false, json);
+        try std.testing.expect(result.term == .exited and result.term.exited != 0);
+        try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "Decoded revert:"));
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "InvalidFeedConfiguration") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "0xbed8168a") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "secret-key") == null);
+        if (json) {
+            const failure = c.field(try c.parse(a, result.stderr), "error").?;
+            try std.testing.expectEqualStrings("CastFailed", try c.string(c.field(failure, "code").?));
+        }
+    }
+}
+
 test "real CLI preserves account, Safe and module routes and envelopes" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

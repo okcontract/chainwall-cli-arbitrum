@@ -6,6 +6,10 @@ pub fn main(init: std.process.Init) !void {
     const argv = try init.minimal.args.toSlice(a);
     if (argv.len < 2) return error.MissingCommand;
     const command = argv[1];
+    if (std.mem.eql(u8, command, "call") and std.mem.endsWith(u8, option(argv, "--rpc-url") orelse "", "/fixture-revert")) {
+        try std.Io.File.stderr().writeStreamingAll(init.io, try std.fmt.allocPrint(a, "execution reverted: custom error 0xbed8168a at {s}\n", .{option(argv, "--rpc-url").?}));
+        return error.FixtureReadReverted;
+    }
     if (std.mem.eql(u8, command, "send") and argv.len == 3 and std.mem.eql(u8, argv[2], "--help")) {
         if (init.environ_map.get("NO_COLOR") == null or init.environ_map.get("CLICOLOR_FORCE") != null or init.environ_map.get("FORCE_COLOR") != null) return error.FixtureHelpRequiresNoColor;
         const legacy = init.environ_map.get("CHAINWALL_TEST_LEGACY_CAST") != null;
