@@ -5,22 +5,29 @@ const abi = @import("abi_codec.zig");
 const contracts = @import("contracts.zig");
 const ms = @import("miniscript");
 
-fn dataIn(value: c.Value, depth: u8) ?[]const u8 {
+fn dataIn(value: c.Value, depth: u8, fallback: *?[]const u8) ?[]const u8 {
     if (depth > 8) return null;
     if (value == .array) {
-        for (value.array.items) |item| if (dataIn(item, depth + 1)) |data| return data;
+        for (value.array.items) |item| if (dataIn(item, depth + 1, fallback)) |data| return data;
     }
     if (value == .string) {
         const text = value.string;
-        if (std.mem.startsWith(u8, text, "0x")) return text;
-        const marker = std.ascii.findIgnoreCase(text, "custom error") orelse std.ascii.findIgnoreCase(text, "revert") orelse return null;
-        const start = std.mem.indexOfPos(u8, text, marker, "0x") orelse return null;
-        var end = start + 2;
-        while (end < text.len and std.ascii.isHex(text[end])) : (end += 1) {}
-        return if (end > start + 2) text[start..end] else null;
+        const data = if (std.mem.startsWith(u8, text, "0x")) text else blk: {
+            const marker = std.ascii.findIgnoreCase(text, "custom error") orelse std.ascii.findIgnoreCase(text, "revert") orelse return null;
+            const start = std.mem.indexOfPos(u8, text, marker, "0x") orelse return null;
+            var end = start + 2;
+            while (end < text.len and std.ascii.isHex(text[end])) : (end += 1) {}
+            if (end == start + 2) return null;
+            break :blk text[start..end];
+        };
+        // Retain the first raw candidate if no complete selector is available.
+        if (fallback.* == null) fallback.* = data;
+        if (data.len < 10 or data.len % 2 != 0) return null;
+        for (data[2..]) |ch| if (!std.ascii.isHex(ch)) return null;
+        return data;
     }
     for ([_][]const u8{ "data", "originalError", "error", "errors", "returnData", "message" }) |key| {
-        if (c.field(value, key)) |inner| if (dataIn(inner, depth + 1)) |data| return data;
+        if (c.field(value, key)) |inner| if (dataIn(inner, depth + 1, fallback)) |data| return data;
     }
     return null;
 }
@@ -118,7 +125,8 @@ fn matchItems(a: c.A, items: []const c.Value, data: []const u8, bytes: []const u
 }
 
 pub fn decode(a: c.A, failure: c.Value) !c.Value {
-    const data = dataIn(failure, 0) orelse {
+    var fallback: ?[]const u8 = null;
+    const data = dataIn(failure, 0, &fallback) orelse fallback orelse {
         if (safeIn(failure, 0)) |entry| return c.parse(a, try c.encode(a, .{ .decoded = true, .name = "Error", .safeCode = entry.code, .description = entry.message }));
         return .null;
     };
@@ -243,4 +251,32 @@ test "Safe codes in plain text require revert context" {
         const result = try decode(a, .{ .string = text });
         try std.testing.expectEqualStrings("GS026", try c.string(c.field(result, "safeCode").?));
     }
+}
+
+test "empty or unusable data does not hide a later revert selector" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const message = "execution reverted: custom error 0xbed8168a";
+    for ([_][]const u8{ "0x", "0x12", "0xbed8168", "0xnothex", "0xzzzzzzzz" }) |raw| {
+        const failure = try c.parse(a, try c.encode(a, .{ .code = 3, .data = raw, .message = message }));
+        const result = try enrich(a, failure);
+        const detail = c.field(result, "detail").?;
+        try std.testing.expect(c.field(detail, "decoded").?.bool);
+        try std.testing.expectEqualStrings("InvalidFeedConfiguration", try c.string(c.field(detail, "name").?));
+        try std.testing.expectEqualStrings("0xbed8168a", try c.string(c.field(detail, "rawData").?));
+        try std.testing.expectEqualStrings(raw, try c.string(c.field(result, "data").?));
+
+        const fallback = try decode(a, try c.parse(a, try c.encode(a, .{ .data = raw, .message = "execution reverted" })));
+        try std.testing.expect(!c.field(fallback, "decoded").?.bool);
+        try std.testing.expectEqualStrings(raw, try c.string(c.field(fallback, "rawData").?));
+    }
+    const nested = try decode(a, try c.parse(a,
+        \\{"data":["0x",{"originalError":{"data":"0x12"}}],"error":{"returnData":"0xbed8168a"}}
+    ));
+    try std.testing.expectEqualStrings("InvalidFeedConfiguration", try c.string(c.field(nested, "name").?));
+
+    const unknown = try decode(a, try c.parse(a, try c.encode(a, .{ .data = "0xdeadbeef1234", .message = message })));
+    try std.testing.expect(!c.field(unknown, "decoded").?.bool);
+    try std.testing.expectEqualStrings("0xdeadbeef1234", try c.string(c.field(unknown, "rawData").?));
 }
