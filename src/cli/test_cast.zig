@@ -20,6 +20,10 @@ pub fn main(init: std.process.Init) !void {
         const from = option(argv, "--from") orelse return error.FixtureEnvelopeMismatch;
         const nonce = option(argv, "--nonce") orelse return error.FixtureEnvelopeMismatch;
         if (!std.mem.eql(u8, from, "0x6666666666666666666666666666666666666666") or !std.mem.eql(u8, nonce, "5")) return error.FixtureEnvelopeMismatch;
+        if (init.environ_map.get("CHAINWALL_TEST_MINED_SEND") != null) {
+            try std.Io.File.stdout().writeStreamingAll(init.io, "0x0000000000000000000000000000000000000000000000000000000000000001");
+            return;
+        }
         return error.FixtureBroadcastStopped;
     }
     const output =

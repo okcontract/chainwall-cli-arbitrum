@@ -285,7 +285,11 @@ pub const Cast = struct {
         try submission.object.put(s.a, "receipt", receipt);
         if (s.journal) |journal| try journal.updateSubmission(submission_index.?, submission);
         try s.recordReceipt(receipt);
-        if (c.field(receipt, "transactionHash")) |hash| try s.showTransaction(c.string(hash) catch "");
+        // A repriced transaction has its own hash; suppress only repeated links.
+        if (c.field(receipt, "transactionHash")) |hash| {
+            const receipt_hash = c.string(hash) catch "";
+            if (parsed != .string or !std.ascii.eqlIgnoreCase(parsed.string, receipt_hash)) try s.showTransaction(receipt_hash);
+        }
         if (failed) return error.TransactionFailed;
         const status = c.field(receipt, "status") orelse return error.InvalidTransactionReceipt;
         if (try c.number(s.a, status) != 1) return error.TransactionReverted;
