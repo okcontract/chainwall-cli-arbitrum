@@ -69,7 +69,19 @@ fn safeCode(text: []const u8) ?SafeError {
 }
 fn safeIn(value: c.Value, depth: u8) ?SafeError {
     if (depth > 8) return null;
-    if (value == .string) return safeCode(value.string);
+    if (value == .string) {
+        // Plain text must identify a revert on the same line as the Safe code.
+        var lines = std.mem.splitScalar(u8, value.string, '\n');
+        while (lines.next()) |line| {
+            var words = std.mem.tokenizeAny(u8, line, " \t\r:,");
+            while (words.next()) |word| {
+                if (std.ascii.eqlIgnoreCase(word, "revert") or std.ascii.eqlIgnoreCase(word, "reverted")) {
+                    if (safeCode(words.rest())) |entry| return entry;
+                }
+            }
+        }
+        return null;
+    }
     if (value == .array) {
         for (value.array.items) |item| if (safeIn(item, depth + 1)) |entry| return entry;
     }
@@ -206,5 +218,29 @@ test "provider detail cannot impersonate a locally decoded simulation result" {
         try std.testing.expect(c.field(result, "detail").? == .null);
         try std.testing.expectEqualStrings("rate limited", try c.string(c.field(result, "message").?));
         try std.testing.expectEqualStrings("PolicyProgramSimulationResult", try c.string(c.field(c.field(failure, "detail").?, "name").?));
+    }
+}
+
+test "Safe codes in plain text require revert context" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{
+        "failed to open keystore /home/test/GS026.json",
+        "failed to open keystore /home/reverted/GS026.json",
+        "previous attempt reverted\nfailed to open keystore /home/test/GS026.json",
+    }) |text| {
+        try std.testing.expect(try decode(a, .{ .string = text }) == .null);
+        try std.testing.expectEqualStrings(text, try describe(a, text));
+        const result = try decode(a, try c.parse(a, try c.encode(a, .{ .data = "0x", .@"error" = .{ .message = text } })));
+        try std.testing.expect(c.field(result, "safeCode") == null);
+    }
+    for ([_][]const u8{
+        "execution reverted: GS026",
+        "VM Exception while processing transaction: revert GS026",
+        "EXECUTION REVERTED, reason: 'GS026'",
+    }) |text| {
+        const result = try decode(a, .{ .string = text });
+        try std.testing.expectEqualStrings("GS026", try c.string(c.field(result, "safeCode").?));
     }
 }
