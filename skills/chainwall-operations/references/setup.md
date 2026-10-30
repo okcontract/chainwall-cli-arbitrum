@@ -104,8 +104,9 @@ an admin signer, then check `terms instance-has-accepted-initial-terms`.
 The CLI verifies SHA-256 document identity. Do not use legacy current-version
 terms commands or assume deployment accepted the terms.
 
-After acceptance, configure and verify native USD pricing with the tenant's
-authorized administrator:
+If native asset USD valuation is needed, configure and verify its price feed
+after acceptance with the tenant's authorized administrator. This is optional
+for deployment and native balance reads:
 
 ```sh
 chainwall tokens set-chainlink-native-feed --dry-run

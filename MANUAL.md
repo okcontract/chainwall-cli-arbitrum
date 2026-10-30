@@ -321,9 +321,9 @@ for the selected chain.
 (chain ID `42161`), including `kv create`. Other chains require an explicit factory
 address.
 
-After deployment, accept the initial terms as described in
-[Inspect and accept terms](#inspect-and-accept-terms), then configure native USD
-valuation with an authorized administrator:
+If you need native asset USD valuation, configure a price feed after accepting
+the initial terms as described in [Inspect and accept terms](#inspect-and-accept-terms).
+Use an authorized administrator:
 
 ```sh
 chainwall tokens set-chainlink-native-feed --dry-run
@@ -333,7 +333,8 @@ chainwall tokens get-native-usd-feed-config
 
 The preset checks the Arbitrum feed and sequencer configuration before building
 the governance calls. Verify the applied configuration before relying on native
-asset valuations; a zero feed returns `NativePriceFeedNotConfigured` in
+asset valuations. This setup is optional for deployment and native balance reads;
+a zero feed returns `NativePriceFeedNotConfigured` in
 `accounts assets` or `safes assets` with these recovery commands.
 
 ## 4. Profiles and configuration
