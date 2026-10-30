@@ -90,9 +90,14 @@ the owner's temporary governance bootstrap.
 
 ```sh
 chainwall terms get-terms-context
-chainwall terms document --document-file factory-terms.md
+chainwall terms document --out factory-terms.md
 chainwall terms accept-terms --document-file factory-terms.md --dry-run
 ```
+
+`terms document --out` downloads and verifies the exact bytes before saving them.
+If the default gateway is rate-limited or unavailable, add
+`--ipfs-gateway https://YOUR_GATEWAY/ipfs` to the download command.
+`--document-file` verifies a file already on disk; it does not download it.
 
 If accepting these exact terms is authorized, submit the same acceptance with
 an admin signer, then check `terms instance-has-accepted-initial-terms`.

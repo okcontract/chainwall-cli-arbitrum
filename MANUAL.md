@@ -1517,11 +1517,17 @@ codehash, binding, or runtime authorization can make the action stale.
 
 ```sh
 chainwall terms get-terms-context
-chainwall terms document --document-file terms.md
+chainwall terms document --out terms.md
 chainwall terms accept-terms --document-file terms.md --dry-run
 chainwall terms accept-terms --document-file terms.md --account admin
 chainwall terms instance-has-accepted-initial-terms
 ```
+
+The first `terms document --out` fetches and verifies the document before saving
+it. To use another IPFS gateway, add `--ipfs-gateway https://YOUR_GATEWAY/ipfs`
+to that command, for example if the default gateway returns HTTP 429.
+`--document-file terms.md` verifies an existing local copy; use it after download
+when previewing or submitting acceptance.
 
 The Registry stores its factory's initial document once. The argument-free shortcut
 captures that URI/digest, verifies the exact document bytes with SHA-256, and submits
