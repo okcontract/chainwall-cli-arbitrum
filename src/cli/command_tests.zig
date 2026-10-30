@@ -15,9 +15,15 @@ const hash = "0x0000000000000000000000000000000000000000000000000000000000000001
 const block = "{\"number\":\"0x64\",\"timestamp\":\"0x64\",\"hash\":\"" ++ hash ++ "\"}";
 
 fn run(a: c.A, dir: []const u8, url: []const u8, args: []const []const u8) !std.process.RunResult {
+    return runWithCast(a, dir, url, args, false);
+}
+fn runWithCast(a: c.A, dir: []const u8, url: []const u8, args: []const []const u8, legacy: bool) !std.process.RunResult {
     var env = std.process.Environ.Map.init(a);
     defer env.deinit();
     try env.put("PATH", std.fs.path.dirname(binaries.cast).?);
+    try env.put("CLICOLOR_FORCE", "1");
+    try env.put("FORCE_COLOR", "1");
+    if (legacy) try env.put("CHAINWALL_TEST_LEGACY_CAST", "1");
     return std.process.run(a, std.testing.io, .{
         .argv = try std.mem.concat(a, []const u8, &.{ &.{ binaries.cli, "--config-dir", dir, "--chain", "arbitrum", "--instance", registry, "--rpc-url", url, "--json" }, args }),
         .environ_map = &env,
@@ -34,6 +40,22 @@ fn reply(a: c.A, value: c.Value) !mock.Reply {
 fn contractReply(a: c.A, cat: contracts.Catalog, group: []const u8, name: []const u8, values: []const c.Value) !mock.Reply {
     const method = try cat.find(group, name);
     return reply(a, .{ .string = try abi.hex(a, try abi.encode(a, c.field(method.abi, "outputs").?, try abi.array(a, values))) });
+}
+
+test "doctor fails when cast send does not support raw calldata" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const result = try runWithCast(a, dir, "http://127.0.0.1:1", &.{"doctor"}, true);
+    try std.testing.expect(result.term == .exited and result.term.exited != 0);
+    const report = try c.parse(a, result.stdout);
+    try std.testing.expect(!c.field(report, "ok").?.bool);
+    const cast = c.field(report, "cast").?;
+    try std.testing.expectEqualStrings("IncompatibleFoundrySend", try c.string(c.field(cast, "code").?));
+    try std.testing.expect(std.mem.indexOf(u8, try c.string(c.field(cast, "action").?), "foundryup --install 1.8.6") != null);
 }
 
 test "real CLI preserves account, Safe and module routes and envelopes" {
