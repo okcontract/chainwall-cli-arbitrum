@@ -15,6 +15,7 @@ pub const Rpc = struct {
     block: Block = undefined,
     requests: usize = 0,
     last_error: ?c.Value = null,
+    reported_chain: ?u64 = null,
     timeout_seconds: u32 = 60,
     read_attempts: u8 = 3,
     retry_delay_ms: u32 = 100,
@@ -140,7 +141,8 @@ pub const Rpc = struct {
     }
     pub fn pinBlock(r: *Rpc, selector: ?[]const u8, confirmations: u64) !void {
         const chain = try r.one("eth_chainId", try abi.array(r.a, &.{}));
-        if (try integer(r.a, chain) != r.chain) return error.RpcChainMismatch;
+        r.reported_chain = try integer(r.a, chain);
+        if (r.reported_chain.? != r.chain) return error.RpcChainMismatch;
         const selected = selector orelse "latest";
         var block = try r.blockAt(if (selected.len > 0 and std.ascii.isDigit(selected[0]) and !std.mem.startsWith(u8, selected, "0x")) try quantity(r.a, try std.fmt.parseInt(u64, selected, 10)) else selected);
         if (confirmations > 0) {

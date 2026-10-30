@@ -18,6 +18,9 @@ fn run(a: c.A, dir: []const u8, url: []const u8, args: []const []const u8) !std.
     return runWithCast(a, dir, url, args, false);
 }
 fn runWithCast(a: c.A, dir: []const u8, url: []const u8, args: []const []const u8, legacy: bool) !std.process.RunResult {
+    return runWithFormat(a, dir, url, args, legacy, true);
+}
+fn runWithFormat(a: c.A, dir: []const u8, url: []const u8, args: []const []const u8, legacy: bool, json: bool) !std.process.RunResult {
     var env = std.process.Environ.Map.init(a);
     defer env.deinit();
     try env.put("PATH", std.fs.path.dirname(binaries.cast).?);
@@ -25,7 +28,7 @@ fn runWithCast(a: c.A, dir: []const u8, url: []const u8, args: []const []const u
     try env.put("FORCE_COLOR", "1");
     if (legacy) try env.put("CHAINWALL_TEST_LEGACY_CAST", "1");
     return std.process.run(a, std.testing.io, .{
-        .argv = try std.mem.concat(a, []const u8, &.{ &.{ binaries.cli, "--config-dir", dir, "--chain", "arbitrum", "--instance", registry, "--rpc-url", url, "--json" }, args }),
+        .argv = try std.mem.concat(a, []const u8, &.{ &.{ binaries.cli, "--config-dir", dir, "--chain", "arbitrum", "--instance", registry, "--rpc-url", url }, if (json) &.{"--json"} else &.{}, args }),
         .environ_map = &env,
         .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(30) } },
     });
@@ -56,6 +59,33 @@ test "doctor fails when cast send does not support raw calldata" {
     const cast = c.field(report, "cast").?;
     try std.testing.expectEqualStrings("IncompatibleFoundrySend", try c.string(c.field(cast, "code").?));
     try std.testing.expect(std.mem.indexOf(u8, try c.string(c.field(cast, "action").?), "foundryup --install 1.8.6") != null);
+}
+
+test "RPC chain mismatch reaches human and JSON command errors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_]bool{ false, true }) |json| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+        var server = try mock.Server.init(std.testing.io, &.{try reply(a, .{ .string = "0x1" })});
+        defer server.deinit();
+        var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+        defer _ = serving.cancel(std.testing.io) catch {};
+        const url = try a.print("{s}/secret-key", .{try server.url(a)});
+        try success(try run(a, dir, url, &.{ "rpc", "add", "wrong-chain" }));
+        const result = try runWithFormat(a, dir, url, &.{ "rpc", "use", "wrong-chain" }, false, json);
+        try std.testing.expect(result.term == .exited and result.term.exited != 0);
+        try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "wrong-chain: RpcChainMismatch (endpoint reports 1, profile expects 42161)"));
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "secret-key") == null);
+        if (json) {
+            const failure = c.field(try c.parse(a, result.stderr), "error").?;
+            try std.testing.expectEqualStrings("NoHealthyRpcEndpoint", try c.string(c.field(failure, "code").?));
+        }
+        try serving.await(std.testing.io);
+        try std.testing.expectEqual(@as(usize, 1), server.requests);
+    }
 }
 
 test "real CLI preserves account, Safe and module routes and envelopes" {
