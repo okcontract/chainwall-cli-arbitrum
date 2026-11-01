@@ -13,7 +13,7 @@ pub const Outcome = struct {
         return o.value;
     }
     pub fn detail(o: Outcome, a: c.A) !c.Value {
-        return c.parse(a, try c.encode(a, .{ .code = @errorName(o.err orelse return .null), .rpcError = o.rpc_error }));
+        return c.parse(a, try c.encode(a, .{ .code = @errorName(o.err orelse return .null), .rpcError = o.rpc_error, .detail = try @import("revert_errors.zig").decode(a, o.rpc_error orelse .null) }));
     }
 };
 pub fn read(remote: *rpc.Rpc, reads: []const Read) ![]Outcome {

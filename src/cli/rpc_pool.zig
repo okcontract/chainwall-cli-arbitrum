@@ -56,9 +56,10 @@ pub fn validateSelection(a: c.A, io: std.Io, dir: []const u8, profile: []const u
     for ((try field(state, "endpoints")).array.items) |entry| if (c.eq(u8, url, try string(entry, "url")) and try eligible(state, entry)) return;
     return error.RpcPrivacyFilterExcluded;
 }
-fn probe(cast: *Cast, url: []const u8, timeout: u32) !rpc.Block {
+fn probe(cast: *Cast, url: []const u8, timeout: u32, reported_chain: *?u64) !rpc.Block {
     var remote = try rpc.Rpc.initEndpoint(cast.a, cast.io, url, cast.chain);
     defer remote.deinit();
+    defer reported_chain.* = remote.reported_chain;
     remote.timeout_seconds = timeout;
     try remote.pinBlock(null, 0);
     if (remote.block.hash.len != 66 or try c.word(remote.block.hash) == 0) return error.InvalidRpcBlock;
@@ -68,13 +69,14 @@ fn probe(cast: *Cast, url: []const u8, timeout: u32) !rpc.Block {
 fn observation(cast: *Cast, endpoint: c.Value, timeout: u32) !c.Value {
     const began = std.Io.Clock.awake.now(cast.io);
     var failure: ?[]const u8 = null;
-    const block: ?rpc.Block = probe(cast, try string(endpoint, "url"), timeout) catch |err| blk: {
+    var reported_chain: ?u64 = null;
+    const block: ?rpc.Block = probe(cast, try string(endpoint, "url"), timeout, &reported_chain) catch |err| blk: {
         if (err == error.OutOfMemory) return err;
         failure = @errorName(err);
         break :blk @as(?rpc.Block, null);
     };
     const elapsed = began.durationTo(std.Io.Clock.awake.now(cast.io)).toMilliseconds();
-    return c.parse(cast.a, try c.encode(cast.a, .{ .checkedAt = std.Io.Clock.real.now(cast.io).toSeconds(), .latencyMs = elapsed, .status = if (failure == null) "healthy" else "unavailable", .@"error" = failure, .block = block }));
+    return c.parse(cast.a, try c.encode(cast.a, .{ .checkedAt = std.Io.Clock.real.now(cast.io).toSeconds(), .latencyMs = elapsed, .status = if (failure == null) "healthy" else "unavailable", .@"error" = failure, .expectedChainId = cast.chain, .reportedChainId = reported_chain, .block = block }));
 }
 fn withinLag(a: c.A, health: c.Value, reference: u64, maximum: u64) !bool {
     if (!c.eq(u8, try string(health, "status"), "healthy")) return false;
@@ -173,6 +175,7 @@ pub fn run(cast: *Cast, dir: []const u8, profile_name: []const u8, args: *Args, 
     }
     if (probing) {
         var candidates = std.json.Array.init(a);
+        var failures: std.Io.Writer.Allocating = .init(a);
         var highest: u64 = 0;
         var found = false;
         for (entries.array.items) |endpoint| {
@@ -188,6 +191,10 @@ pub fn run(cast: *Cast, dir: []const u8, profile_name: []const u8, args: *Args, 
             if (c.eq(u8, try string(result, "status"), "healthy")) {
                 highest = @max(highest, try rpc.integer(a, try field(try field(result, "block"), "number")));
                 try candidates.append(try c.parse(a, try c.encode(a, .{ .endpoint = endpoint, .health = result })));
+            } else {
+                try failures.writer.print("{s}: {s}", .{ name, try string(result, "error") });
+                if (c.eq(u8, try string(result, "error"), "RpcChainMismatch")) try failures.writer.print(" (endpoint reports {d}, profile expects {d})", .{ try c.number(a, try field(result, "reportedChainId")), cast.chain });
+                try failures.writer.writeByte('\n');
             }
         }
         if (p.len == 3 and !found) return error.RpcEndpointNotFound;
@@ -204,7 +211,10 @@ pub fn run(cast: *Cast, dir: []const u8, profile_name: []const u8, args: *Args, 
                 if (!try withinLag(a, health, highest, max_lag)) continue;
                 if (best == null or try c.number(a, try field(health, "latencyMs")) < try c.number(a, try field(try field(best.?, "health"), "latencyMs"))) best = candidate.*;
             }
-            const endpoint = try field(best orelse return error.NoHealthyRpcEndpoint, "endpoint");
+            const endpoint = try field(best orelse {
+                cast.diagnostic = try failures.toOwnedSlice();
+                return error.NoHealthyRpcEndpoint;
+            }, "endpoint");
             selected_name = try string(endpoint, "name");
             try profile.setForChain(a, "rpc.", cast.chain, try string(endpoint, "url"));
             profile_changed = true;
@@ -250,4 +260,30 @@ test "earlier RPC samples are refreshed before rejecting apparent lag" {
     const later = try c.parse(a, "{\"status\":\"healthy\",\"block\":{\"number\":110}}");
     try std.testing.expect(try withinLag(a, later, 110, 3));
     try std.testing.expect(!try withinLag(a, later, 120, 3));
+}
+
+test "RPC selection reports endpoint chain disagreement without exposing its URL" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const mock = @import("test_rpc.zig");
+    var server = try mock.Server.init(std.testing.io, &.{.{ .body = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xa4b1\"}]" }});
+    defer server.deinit();
+    var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+    defer _ = serving.cancel(std.testing.io) catch {};
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    const url = try a.print("{s}/secret-key", .{try server.url(a)});
+    var cast: Cast = .{ .a = a, .io = std.testing.io, .env = &env, .chain = 1, .rpc = url };
+    var add_args = try Args.parse(a, &.{});
+    _ = try run(&cast, dir, "default", &add_args, &.{ "rpc", "add", "arb1" }, false);
+    var use_args = try Args.parse(a, &.{});
+    try std.testing.expectError(error.NoHealthyRpcEndpoint, run(&cast, dir, "default", &use_args, &.{ "rpc", "use", "arb1" }, false));
+    try std.testing.expect(std.mem.indexOf(u8, cast.diagnostic.?, "arb1: RpcChainMismatch (endpoint reports 42161, profile expects 1)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cast.diagnostic.?, "secret-key") == null);
+    try std.testing.expect((try config.load(a, std.testing.io, dir, "default")).forChain("rpc.", 1) == null);
+    try serving.await(std.testing.io);
 }

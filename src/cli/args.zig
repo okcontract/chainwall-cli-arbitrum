@@ -5,6 +5,7 @@ pub const Option = struct { key: []const u8, value: []const u8, used: bool = fal
 pub const Args = struct {
     positional: []const []const u8,
     options: []Option,
+    rejected: ?[]const u8 = null,
     pub fn parse(a: c.A, argv: []const []const u8) !Args {
         var positional: std.ArrayList([]const u8) = .empty;
         var options: std.ArrayList(Option) = .empty;
@@ -45,8 +46,12 @@ pub const Args = struct {
     pub fn flag(args: *Args, key: []const u8) bool {
         return args.get(key) != null;
     }
-    pub fn finish(args: Args) !void {
-        for (args.options) |option| if (!option.used) return error.UnknownOption;
+    pub fn reject(args: *Args, key: []const u8) error{UnknownOption} {
+        args.rejected = key;
+        return error.UnknownOption;
+    }
+    pub fn finish(args: *Args) !void {
+        for (args.options) |option| if (!option.used) return args.reject(option.key);
     }
 };
 
@@ -59,4 +64,13 @@ test "options work before and after commands without shell interpretation" {
     try std.testing.expect(args.flag("dry-run"));
     try std.testing.expectEqualStrings("$(not-a-shell)", args.positional[2]);
     try args.finish();
+}
+
+test "unused options retain the rejected name for command diagnostics" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var args = try Args.parse(arena.allocator(), &.{ "safes", "create", "--salt", "treasury", "--out", "safe.json" });
+    _ = args.get("salt");
+    try std.testing.expectError(error.UnknownOption, args.finish());
+    try std.testing.expectEqualStrings("out", args.rejected.?);
 }

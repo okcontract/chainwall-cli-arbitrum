@@ -90,14 +90,34 @@ the owner's temporary governance bootstrap.
 
 ```sh
 chainwall terms get-terms-context
-chainwall terms document --document-file factory-terms.md
+chainwall terms document --out factory-terms.md
 chainwall terms accept-terms --document-file factory-terms.md --dry-run
 ```
+
+`terms document --out` downloads and verifies the exact bytes before saving them.
+If the default gateway is rate-limited or unavailable, add
+`--ipfs-gateway https://YOUR_GATEWAY/ipfs` to the download command.
+`--document-file` verifies a file already on disk; it does not download it.
 
 If accepting these exact terms is authorized, submit the same acceptance with
 an admin signer, then check `terms instance-has-accepted-initial-terms`.
 The CLI verifies SHA-256 document identity. Do not use legacy current-version
 terms commands or assume deployment accepted the terms.
+
+If native asset USD valuation is needed, configure and verify its price feed
+after acceptance with the tenant's authorized administrator. This is optional
+for deployment and native balance reads:
+
+```sh
+chainwall tokens set-chainlink-native-feed --dry-run
+chainwall tokens set-chainlink-native-feed --account administrator
+chainwall tokens get-native-usd-feed-config
+```
+
+Review the preset's feed, age and sequencer checks before submitting. Governance
+may queue the change; verify that the configured feed is nonzero after execution.
+Until then, native balances remain visible but their USD values are null with
+`NativePriceFeedNotConfigured` and a recovery command.
 
 ## Users, policies, and managed vaults
 

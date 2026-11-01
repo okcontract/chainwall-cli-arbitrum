@@ -14,12 +14,24 @@ const actor = "0x6666666666666666666666666666666666666666";
 const hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
 const block = "{\"number\":\"0x64\",\"timestamp\":\"0x64\",\"hash\":\"" ++ hash ++ "\"}";
 
+const CastMode = enum { current, legacy, mined };
+
 fn run(a: c.A, dir: []const u8, url: []const u8, args: []const []const u8) !std.process.RunResult {
+    return runWithCast(a, dir, url, args, .current);
+}
+fn runWithCast(a: c.A, dir: []const u8, url: []const u8, args: []const []const u8, mode: CastMode) !std.process.RunResult {
+    return runWithFormat(a, dir, url, args, mode, true);
+}
+fn runWithFormat(a: c.A, dir: []const u8, url: []const u8, args: []const []const u8, mode: CastMode, json: bool) !std.process.RunResult {
     var env = std.process.Environ.Map.init(a);
     defer env.deinit();
     try env.put("PATH", std.fs.path.dirname(binaries.cast).?);
+    try env.put("CLICOLOR_FORCE", "1");
+    try env.put("FORCE_COLOR", "1");
+    if (mode == .legacy) try env.put("CHAINWALL_TEST_LEGACY_CAST", "1");
+    if (mode == .mined) try env.put("CHAINWALL_TEST_MINED_SEND", "1");
     return std.process.run(a, std.testing.io, .{
-        .argv = try std.mem.concat(a, []const u8, &.{ &.{ binaries.cli, "--config-dir", dir, "--chain", "arbitrum", "--instance", registry, "--rpc-url", url, "--json" }, args }),
+        .argv = try std.mem.concat(a, []const u8, &.{ &.{ binaries.cli, "--config-dir", dir, "--chain", "arbitrum", "--instance", registry, "--rpc-url", url }, if (json) &.{"--json"} else &.{}, args }),
         .environ_map = &env,
         .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(30) } },
     });
@@ -34,6 +46,70 @@ fn reply(a: c.A, value: c.Value) !mock.Reply {
 fn contractReply(a: c.A, cat: contracts.Catalog, group: []const u8, name: []const u8, values: []const c.Value) !mock.Reply {
     const method = try cat.find(group, name);
     return reply(a, .{ .string = try abi.hex(a, try abi.encode(a, c.field(method.abi, "outputs").?, try abi.array(a, values))) });
+}
+
+test "doctor fails when cast send does not support raw calldata" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const result = try runWithCast(a, dir, "http://127.0.0.1:1", &.{"doctor"}, .legacy);
+    try std.testing.expect(result.term == .exited and result.term.exited != 0);
+    const report = try c.parse(a, result.stdout);
+    try std.testing.expect(!c.field(report, "ok").?.bool);
+    const cast = c.field(report, "cast").?;
+    try std.testing.expectEqualStrings("IncompatibleFoundrySend", try c.string(c.field(cast, "code").?));
+    try std.testing.expect(std.mem.indexOf(u8, try c.string(c.field(cast, "action").?), "foundryup --install 1.8.6") != null);
+}
+
+test "RPC chain mismatch reaches human and JSON command errors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_]bool{ false, true }) |json| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+        var server = try mock.Server.init(std.testing.io, &.{try reply(a, .{ .string = "0x1" })});
+        defer server.deinit();
+        var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+        defer _ = serving.cancel(std.testing.io) catch {};
+        const url = try a.print("{s}/secret-key", .{try server.url(a)});
+        try success(try run(a, dir, url, &.{ "rpc", "add", "wrong-chain" }));
+        const result = try runWithFormat(a, dir, url, &.{ "rpc", "use", "wrong-chain" }, .current, json);
+        try std.testing.expect(result.term == .exited and result.term.exited != 0);
+        try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "wrong-chain: RpcChainMismatch (endpoint reports 1, profile expects 42161)"));
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "secret-key") == null);
+        if (json) {
+            const failure = c.field(try c.parse(a, result.stderr), "error").?;
+            try std.testing.expectEqualStrings("NoHealthyRpcEndpoint", try c.string(c.field(failure, "code").?));
+        }
+        try serving.await(std.testing.io);
+        try std.testing.expectEqual(@as(usize, 1), server.requests);
+    }
+}
+
+test "captured contract errors are decoded and redacted in human and JSON output" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    for ([_]bool{ false, true }) |json| {
+        const result = try runWithFormat(a, dir, "https://provider.example/secret-key/fixture-revert", &.{ "registry", "paused" }, .current, json);
+        try std.testing.expect(result.term == .exited and result.term.exited != 0);
+        try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "Decoded revert:"));
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "InvalidFeedConfiguration") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "0xbed8168a") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "secret-key") == null);
+        if (json) {
+            const failure = c.field(try c.parse(a, result.stderr), "error").?;
+            try std.testing.expectEqualStrings("CastFailed", try c.string(c.field(failure, "code").?));
+        }
+    }
 }
 
 test "real CLI preserves account, Safe and module routes and envelopes" {
@@ -256,5 +332,49 @@ test "proposal reconciliation recovers prepared files idempotently and rejects u
             try std.testing.expectEqualStrings(saved.?, try c.read(a, std.testing.io, file));
         }
         try serving.await(std.testing.io);
+    }
+}
+
+test "submitted transaction links appear once per hash including repriced replacements" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const input = "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001";
+    const replacement_hash = "0x0000000000000000000000000000000000000000000000000000000000000002";
+    for ([_]bool{ false, true }) |repriced| {
+        const receipt_hash = if (repriced) replacement_hash else hash;
+        const transaction = try c.parse(a, try c.encode(a, .{ .hash = receipt_hash, .from = actor, .to = registry, .nonce = "0x5", .value = "0x0", .input = input, .chainId = "0xa4b1", .blockHash = hash, .blockNumber = "0x64" }));
+        const receipt = try c.parse(a, try c.encode(a, .{ .transactionHash = receipt_hash, .status = "0x1", .from = actor, .to = registry, .blockHash = hash, .blockNumber = "0x64", .logs = .{} }));
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+        var replies: std.ArrayList(mock.Reply) = .empty;
+        try replies.appendSlice(a, &.{
+            try reply(a, .{ .string = "0xa4b1" }),                                                                                                                                                                       try reply(a, try c.parse(a, block)),
+            try reply(a, .{ .string = "0x5" }),                                                                                                                                                                          try reply(a, try c.parse(a, block)),
+            try reply(a, .{ .string = "0xa4b1" }),                                                                                                                                                                       try reply(a, try c.parse(a, block)),
+            .{ .body = try c.encode(a, .{ .{ .jsonrpc = "2.0", .id = 1, .result = if (repriced) c.Value.null else transaction }, .{ .jsonrpc = "2.0", .id = 2, .result = if (repriced) c.Value.null else receipt } }) },
+        });
+        if (repriced) {
+            const full_block = try c.parse(a, try c.encode(a, .{ .number = "0x64", .timestamp = "0x64", .hash = hash, .transactions = .{transaction} }));
+            try replies.appendSlice(a, &.{ try reply(a, .{ .string = "0x6" }), try reply(a, full_block), try reply(a, receipt) });
+        }
+        try replies.appendSlice(a, &.{ try reply(a, try c.parse(a, block)), try reply(a, try c.parse(a, block)) });
+        var server = try mock.Server.init(std.testing.io, replies.items);
+        defer server.deinit();
+        var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+        defer _ = serving.cancel(std.testing.io) catch {};
+        const result = try runWithCast(a, dir, try server.url(a), &.{ "registry", "pause", "--account", "fixture" }, .mined);
+        try success(result);
+        const report = try c.parse(a, result.stdout);
+        try std.testing.expectEqualStrings("confirmed", try c.string(c.field(report, "status").?));
+        try std.testing.expectEqualStrings(receipt_hash, try c.string(c.field(c.field(report, "receipt").?, "transactionHash").?));
+        const expected: usize = if (repriced) 2 else 1;
+        try std.testing.expectEqual(expected, std.mem.count(u8, result.stderr, "Transaction:"));
+        try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "Submitted:"));
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "https://arbiscan.io/tx/" ++ hash) != null);
+        if (repriced) try std.testing.expect(std.mem.indexOf(u8, result.stderr, "https://arbiscan.io/tx/" ++ replacement_hash) != null);
+        try serving.await(std.testing.io);
+        try std.testing.expectEqual(replies.items.len, server.requests);
     }
 }

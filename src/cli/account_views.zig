@@ -118,7 +118,13 @@ pub fn assets(cast: *Cast, cat: contracts.Catalog, args: *Args, account: []const
             break :blk c.Value.null;
         };
         try native.object.put(a, "feed", feed);
-        try price(&remote, cat, cast.instance, &native, null, amount, age);
+        if (feed != .null and try c.number(a, c.field(feed, "feed") orelse return error.InvalidContractResponse) == 0) {
+            try native.object.put(a, "priceError", try c.parse(a, try c.encode(a, .{
+                .code = "NativePriceFeedNotConfigured",
+                .message = "The Registry has no native USD price feed configured.",
+                .recovery = .{ .preview = "chainwall tokens set-chainlink-native-feed --dry-run", .command = "chainwall tokens set-chainlink-native-feed --account ADMIN" },
+            })));
+        } else if (feed != .null) try price(&remote, cat, cast.instance, &native, null, amount, age);
         try rows.append(native);
     }
     const metadata_reads = try a.alloc(metadata_batch.Read, keys.items.len * 2);
@@ -327,4 +333,37 @@ test "asset decimals preserve exact base units without floating point" {
     try std.testing.expectEqualStrings("0.000000000000000001", try decimals(a, 1, 18));
     try std.testing.expectEqualStrings("100", try decimals(a, 100, 0));
     try std.testing.expectEqualStrings("115792089237316195423570985008687907853269984665640564039457.584007913129639935", try decimals(a, std.math.maxInt(u256), 18));
+}
+
+test "native assets report an unset feed without issuing price calls" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const mock = @import("test_rpc.zig");
+    const cat = try contracts.Catalog.load(a);
+    const method = try cat.find("tokens", "getNativeUsdFeedConfig");
+    const feed = try abi.hex(a, try abi.encode(a, c.field(method.abi, "outputs").?, try abi.array(a, &.{ .{ .string = "0x0000000000000000000000000000000000000000" }, try abi.uint(a, 0) })));
+    const head = try c.parse(a, "{\"number\":\"0x1\",\"timestamp\":\"0x1\",\"hash\":\"0x1111111111111111111111111111111111111111111111111111111111111111\"}");
+    var replies: std.ArrayList(mock.Reply) = .empty;
+    for ([_]c.Value{ .{ .string = "0xa4b1" }, head, .{ .string = "0x6000" }, .{ .string = try c.hex(a, @as(u256, 0)) }, .{ .string = "0x1" }, .{ .string = feed }, head }) |value| {
+        try replies.append(a, .{ .body = try c.encode(a, .{.{ .jsonrpc = "2.0", .id = 1, .result = value }}) });
+    }
+    var server = try mock.Server.init(std.testing.io, replies.items);
+    defer server.deinit();
+    var serving = try std.testing.io.concurrent(mock.Server.serve, .{&server});
+    defer _ = serving.cancel(std.testing.io) catch {};
+    var env: std.process.Environ.Map = .init(a);
+    defer env.deinit();
+    var cast: Cast = .{ .a = a, .io = std.testing.io, .env = &env, .chain = 42161, .rpc = try server.url(a), .instance = "0x2222222222222222222222222222222222222222" };
+    var args = try Args.parse(a, &.{});
+    const report = try assets(&cast, cat, &args, "0x3333333333333333333333333333333333333333");
+    const native = c.field(report, "assets").?.array.items[0];
+    try std.testing.expectEqual(@as(u256, 1), try c.number(a, c.field(native, "balance").?));
+    try std.testing.expect(c.field(native, "usdValue18").? == .null);
+    const failure_record = c.field(native, "priceError").?;
+    try std.testing.expectEqualStrings("NativePriceFeedNotConfigured", try c.string(c.field(failure_record, "code").?));
+    try std.testing.expectEqualStrings("chainwall tokens set-chainlink-native-feed --dry-run", try c.string(c.field(c.field(failure_record, "recovery").?, "preview").?));
+    try std.testing.expect(!c.field(report, "portfolioComplete").?.bool);
+    try serving.await(std.testing.io);
+    try std.testing.expectEqual(@as(usize, 7), server.requests);
 }

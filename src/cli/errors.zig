@@ -68,6 +68,7 @@ fn fieldFor(err: anyerror) ?[]const u8 {
         error.InvalidNonce, error.BundlerManagesNonce => "--nonce",
         error.InvalidGasLimit => "--gas-limit",
         error.EstimateNotApplicable => "--estimate",
+        error.AddressArgumentRequired => "ADDRESS",
         else => null,
     };
 }
