@@ -17,5 +17,10 @@
 5. Wrong recipient impossible: there is no argument for it; state that the
    recipient is the literal vault address in the published source
    (`interactions source W2U_ID`).
+6. Swap back (write, user's yes): `operations propose` `swap-desk-usdc-to-weth`
+   with a USDC amount the account now holds (for example `["10000000", MIN]`,
+   MIN from the quote or the executed price minus 5 percent); simulate;
+   execute. Read: vault USDC down by the input, vault WETH up by at least MIN,
+   USDC allowance to the router back to 0, operation closed.
 
 Record every command, decoded result, hash and balance.
