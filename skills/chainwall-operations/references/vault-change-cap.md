@@ -1,7 +1,7 @@
-# Recipe: change the vault's per-operation cap (timelocked policy change)
+# Setup: change the vault's per-operation cap (timelocked policy change)
 
-Extends [usdc-aave-vault](../usdc-aave-vault/SKILL.md). Read `../../SKILL.md`
-and that recipe first; their rules on signer, profile, dry runs and "never
+Extends [usdc-aave-vault](usdc-aave-vault.md). Read `../SKILL.md`
+and that setup first; their rules on signer, profile, dry runs and "never
 invent a command" apply. Take every flag from `chainwall <command> --help --json`.
 
 ## Outcome
@@ -9,13 +9,13 @@ invent a command" apply. Take every flag from `chainwall <command> --help --json
 The vault's policy program is replaced so each operation may move up to
 `{{newCap}}` USDC base units instead of 100 USDC (`100000000`). If the
 `timelock.category.policy` delay is live, the change is queued and applies only
-after the delay; the recipe proves the old cap holds until then, then executes
+after the delay; the setup proves the old cap holds until then, then executes
 or cancels the queued action. This is the smallest real example of a
 timelocked rule change.
 
 ## Prerequisites (read, do not write)
 
-Run the Resume table of the vault recipe. Required: instance bound in the
+Run the Resume table of the vault setup. Required: instance bound in the
 active profile, policy `usdc-vault-policy` with a published program, the three
 interactions present. Read
 `timelock get-category-config $(chainwall id timelock.category.policy)` and
@@ -41,7 +41,7 @@ Ask the user for one value: the new cap in USDC. Default 500 USDC
 - Operation payload hashes bind the policy program hash. Any proposal created
   before the change becomes unexecutable after it and must be re-proposed.
 - `setPolicyProgram` on a policy also stales approvals on queued actions that
-  reference it; there are none in this recipe.
+  reference it; there are none in this setup.
 
 ## Names
 
@@ -51,7 +51,7 @@ Existing: policy `usdc-vault-policy`, interactions `usdc-vault-supply`,
 
 ## Script
 
-[policy.ls](policy.ls) is the vault recipe's program with `{{cap}}` in place of
+[policy.ls](../assets/vault-change-cap/policy.ls) is the vault setup's program with `{{cap}}` in place of
 `100000000`. Fill `{{policyId}}`, `{{vault}}`, `{{supplyId}}`, `{{withdrawId}}`,
 `{{payoutId}}`, `{{cap}}`; no comments in `.ls`. Compile:
 

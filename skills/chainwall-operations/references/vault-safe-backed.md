@@ -1,7 +1,7 @@
-# Recipe: the same vault as a guarded Safe with two owners
+# Setup: the same vault as a guarded Safe with two owners
 
-Extends [usdc-aave-vault](../usdc-aave-vault/SKILL.md). Read `../../SKILL.md`,
-that recipe, and [execution.md](../../references/execution.md) ("Guarded Safe
+Extends [usdc-aave-vault](usdc-aave-vault.md). Read `../SKILL.md`,
+that setup, and [execution.md](execution.md) ("Guarded Safe
 execution") first; their rules apply. Take every flag from
 `chainwall <command> --help --json`.
 
@@ -17,7 +17,7 @@ from inside the Safe (self-calls are blocked by the guard).
 
 ## Prerequisites
 
-Vault recipe steps 1 to 8 done (the catalog and the approvers group are
+Vault setup steps 1 to 8 done (the catalog and the approvers group are
 reused). If delays are live, writes below return `queued`; collect `actionId`
 and `eta`, execute after `eta`, continue. Say so first.
 
@@ -59,11 +59,11 @@ Compute every id with `chainwall id NAME`. Catalog: existing `circle/usdc` and
 
 ## Scripts
 
-The vault recipe's [supply.ls](../usdc-aave-vault/supply.ls),
-[withdraw.ls](../usdc-aave-vault/withdraw.ls), [payout.ls](../usdc-aave-vault/payout.ls)
-and [policy.ls](../usdc-aave-vault/policy.ls), with `{{policyId}}` = the safe
+The vault setup's [supply.ls](../assets/usdc-aave-vault/supply.ls),
+[withdraw.ls](../assets/usdc-aave-vault/withdraw.ls), [payout.ls](../assets/usdc-aave-vault/payout.ls)
+and [policy.ls](../assets/usdc-aave-vault/policy.ls), with `{{policyId}}` = the safe
 policy id, `{{vault}}` = the Safe address, and the three new interaction ids in
-`policy.ls`. Compile exactly as the vault recipe says.
+`policy.ls`. Compile exactly as the vault setup says.
 
 ## Order
 
@@ -84,7 +84,7 @@ policy id, `{{vault}}` = the Safe address, and the three new interaction ids in
 
 Dry-run every Registry write, show it, send with the owner's `--account`.
 Pause for the user's yes before step 1's send and before the real supply in
-verify.md.
+vault-safe-backed-verify.md.
 
 ## Finish
 

@@ -1,5 +1,5 @@
 {
-  "recipe": "usdc-aave-vault",
+  "setup": "usdc-aave-vault",
   "chainId": 42161,
   "defaultRpc": "https://arb1.arbitrum.io/rpc",
   "okFactory": "0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b",

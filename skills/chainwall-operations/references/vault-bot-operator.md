@@ -1,7 +1,7 @@
-# Recipe: a bot operator with a daily budget and a kill switch
+# Setup: a bot operator with a daily budget and a kill switch
 
-Extends [usdc-aave-vault](../usdc-aave-vault/SKILL.md). Read `../../SKILL.md`
-and that recipe first; their rules on signer, profile, dry runs and "never
+Extends [usdc-aave-vault](usdc-aave-vault.md). Read `../SKILL.md`
+and that setup first; their rules on signer, profile, dry runs and "never
 invent a command" apply. Take every flag from `chainwall <command> --help --json`.
 
 ## Outcome
@@ -16,12 +16,12 @@ budget, into Aave or back to the vault, and nowhere else.
 
 ## Prerequisites
 
-Vault recipe steps 1 to 8 done (run its Resume table). Delays: if
+Vault setup steps 1 to 8 done (run its Resume table). Delays: if
 `timelock.category.policy`, `group`, `interaction` or `capability` are live
 (86400), every write below returns `queued` and applies after 24 hours; collect
 each `actionId` and `eta`, execute them with `timelock execute-action` after
 `eta`, and only then continue. Tell the user this before starting. Running this
-recipe before the vault's step 9 avoids the wait.
+setup before the vault's step 9 avoids the wait.
 
 ## Inputs
 
@@ -31,7 +31,7 @@ recipe before the vault's step 9 avoids the wait.
   executions, about 300k gas each). The bot address is BOT.
 - Daily budget: default 500 USDC (`500000000`). Per operation cap: 100 USDC.
 
-Nothing else. The owner (vault recipe signer) signs every Registry write; the
+Nothing else. The owner (vault setup signer) signs every Registry write; the
 bot signs only its own operations.
 
 ## Mechanics the user should hear first
@@ -68,12 +68,12 @@ bot signs only its own operations.
 | Meter id | `usdc-vault-bot-daily` |
 
 Compute every id with `chainwall id NAME`. Catalog entries are the vault
-recipe's `circle/usdc` and `aave/pool-v3`; add nothing.
+setup's `circle/usdc` and `aave/pool-v3`; add nothing.
 
 ## Scripts
 
-[supply.ls](supply.ls) and [withdraw.ls](withdraw.ls) equal the vault recipe's
-with `{{policyId}}` = the bot policy id. [bot-policy.ls](bot-policy.ls) is the
+[supply.ls](../assets/vault-bot-operator/supply.ls) and [withdraw.ls](../assets/vault-bot-operator/withdraw.ls) equal the vault setup's
+with `{{policyId}}` = the bot policy id. [bot-policy.ls](../assets/vault-bot-operator/bot-policy.ls) is the
 allowlist plus cap plus meter. Fill `{{policyId}}`, `{{vault}}`, `{{usdc}}`,
 `{{pool}}`, `{{supplyId}}`, `{{withdrawId}}`, `{{meterId}}`, `{{dailyLimit}}`,
 and `{{registryWord}}`: the Registry (instance) address left-padded to 32 bytes,
@@ -82,7 +82,7 @@ and `{{registryWord}}`: the Registry (instance) address left-padded to 32 bytes,
 `0x4671fe19` is the selector of `consumePolicyMeter(bytes32,bytes32,uint64,uint256,uint256,bytes32,bytes32,bytes32,bytes32)`;
 confirm with `cast sig`. No comments in `.ls`.
 
-Compile the two interactions with the vault recipe's ABIs and the program with
+Compile the two interactions with the vault setup's ABIs and the program with
 `policies program compile`; all must be valid and complete, selectors
 `0x095ea7b3` then `0x617ba037`, and `0x69328dec`.
 
@@ -111,7 +111,7 @@ Verify each step on chain before the next (`users contains BOT`,
 
 Dry-run every write, show it, send with the owner's `--account`. Pause for the
 user's yes at two points: before step 7 (the bot gains execution rights) and
-before the real bot supply in verify.md.
+before the real bot supply in vault-bot-operator-verify.md.
 
 ## Finish
 

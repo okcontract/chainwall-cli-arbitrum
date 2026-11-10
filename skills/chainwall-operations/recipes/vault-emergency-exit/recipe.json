@@ -1,9 +1,0 @@
-{
-  "recipe": "vault-emergency-exit",
-  "extends": "usdc-aave-vault",
-  "policy": { "name": "usdc-vault-exit-policy", "criteria": ["usdc-vault-approvers"], "thresholds": [1], "program": "exit-policy.ls" },
-  "interactions": { "usdc-vault-exit": "exit.ls" },
-  "aaveWithdrawAll": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
-  "killSwitch": { "pause": "roles pause (ADMIN_ROLE or cap.registry.pause)", "unpause": "roles unpause (ADMIN_ROLE only)", "order": "exit first, then pause" },
-  "optionalGuardianGroup": "usdc-vault-guardians with cap.registry.pause"
-}

@@ -1,7 +1,7 @@
-# Recipe: treasury payouts with two approvals, fixed recipients and a monthly budget
+# Setup: treasury payouts with two approvals, fixed recipients and a monthly budget
 
-Extends [usdc-aave-vault](../usdc-aave-vault/SKILL.md). Read `../../SKILL.md`
-and that recipe first; their rules apply. Take every flag from
+Extends [usdc-aave-vault](usdc-aave-vault.md). Read `../SKILL.md`
+and that setup first; their rules apply. Take every flag from
 `chainwall <command> --help --json`.
 
 ## Outcome
@@ -15,7 +15,7 @@ longer pay anyone.
 
 ## Prerequisites
 
-Vault recipe steps 1 to 8 done. If the policy, group, interaction or
+Vault setup steps 1 to 8 done. If the policy, group, interaction or
 capability delays are live, every write below returns `queued`; collect
 `actionId` and `eta`, execute after `eta` with `timelock execute-action`, then
 continue. Say so before starting.
@@ -61,8 +61,8 @@ Compute every id with `chainwall id NAME`. Catalog: the existing `circle/usdc`.
 
 ## Scripts
 
-[pay.ls](pay.ls) is one template per recipient: fill `{{policyId}}`,
-`{{vault}}`, `{{recipient}}`, save as `pay-<label>.ls`. [treasury-policy.ls](treasury-policy.ls)
+[pay.ls](../assets/vault-treasury-approvals/pay.ls) is one template per recipient: fill `{{policyId}}`,
+`{{vault}}`, `{{recipient}}`, save as `pay-<label>.ls`. [treasury-policy.ls](../assets/vault-treasury-approvals/treasury-policy.ls)
 takes `{{policyId}}`, `{{vault}}`, `{{payAId}}`, `{{payBId}}`, `{{meterId}}`,
 `{{cap}}`, `{{monthlyLimit}}`, `{{registryWord}}` (Registry address as a 32 byte
 word, as in vault-bot-operator). Compile each `pay-*.ls` with
@@ -88,7 +88,7 @@ Verify each step on chain before the next.
 ## Signing and pauses
 
 Dry-run every write, show it, send with the owner's `--account`. Pause for
-the user's yes before step 7 and before the real payout in verify.md.
+the user's yes before step 7 and before the real payout in vault-treasury-approvals-verify.md.
 
 ## Finish
 

@@ -1,7 +1,7 @@
-# Recipe: guarded USDC vault on Arbitrum One (Aave v3), with a free Sepolia test mode
+# Setup: guarded USDC vault on Arbitrum One (Aave v3), with a free Sepolia test mode
 
-Read `../../SKILL.md` first. Its rules on profiles, dry runs, signing and
-"never invent a command, selector or address" apply throughout this recipe.
+Read `../SKILL.md` first. Its rules on profiles, dry runs, signing and
+"never invent a command, selector or address" apply throughout this setup.
 Take every command's exact flags from `chainwall <command> --help --json`.
 
 ## Outcome
@@ -9,10 +9,10 @@ Take every command's exact flags from `chainwall <command> --help --json`.
 A Chainwall OKAccount on Arbitrum One that holds USDC and can do exactly three
 things, each capped at 100 USDC per operation: supply USDC to Aave v3, withdraw
 it back to the vault, and pay USDC out to the owner's wallet. Every other call is
-rejected on chain. The recipe ends with one real 1 USDC supply and a record file.
+rejected on chain. The setup ends with one real 1 USDC supply and a record file.
 
 The user is owner, administrator, operator and sole approver. Nothing in this
-recipe adds other people or grants anything beyond the three interactions.
+setup adds other people or grants anything beyond the three interactions.
 
 ## Start here: tell the user what to expect
 
@@ -46,7 +46,7 @@ Check the tools and stop with the exact fix when one is missing:
   `curl -L https://foundry.paradigm.xyz | bash` and then `foundryup`.
 - `chainwall --version` fails: the user installs a verified Chainwall CLI
   distribution (https://chainwall.org) or builds it as in
-  [setup.md](../../references/setup.md).
+  [setup.md](setup.md).
 - `cast wallet list` is empty: the user runs `cast wallet new NAME` (or
   `cast wallet import NAME --interactive` for an existing key) in their own
   terminal, chooses a password there, and funds that address with ETH on
@@ -54,14 +54,14 @@ Check the tools and stop with the exact fix when one is missing:
 
 Keep every later message to the user short: what just happened, what is next,
 and what (if anything) they must do. Never ask a question whose answer is
-already in this recipe or on chain.
+already in this setup or on chain.
 
 ## Network
 
 Arbitrum One is the default and the only network with real money. If the
 user's request names Sepolia (or "testnet"), use the free Ethereum Sepolia test
 network instead: take every chain value below from `networks.sepolia` in
-recipe.json, and wherever this recipe says Arbitrum One, 42161, ETH or USDC,
+setup.json, and wherever this setup says Arbitrum One, 42161, ETH or USDC,
 read the Sepolia equivalent (Sepolia test ETH; Aave's Sepolia test USDC). Say
 which network you are using in the opening message. Never mix the two: every
 command in one run uses the same chain, RPC and addresses.
@@ -86,7 +86,7 @@ Sepolia differences, all of them:
   deploy send, run `deploy … --estimate --from OWNER`; it must print
   `"balanceSufficient": true`. If the RPC rejects it, switch `rpc_url` to
   another Sepolia RPC that passes this estimate before anything is sent. This is the one
-  case where the recipe creates a profile; it never changes the active profile.
+  case where the setup creates a profile; it never changes the active profile.
 - Factory: the CLI bundles no Sepolia factory (`deploy` fails with
   `FactoryRequired` otherwise); the profile's `factory` key supplies it.
 - Gas: Sepolia ETH is free from public faucets. Use only
@@ -99,7 +99,7 @@ Sepolia differences, all of them:
 - USDC: Aave on Sepolia accepts only its own test USDC
   (`networks.sepolia.usdc`), not Circle's Sepolia USDC. The catalog still names
   it `circle/usdc`, so every script, id and policy is identical across networks.
-- Funding the vault (verify.md check 4): instead of asking the user to send
+- Funding the vault (usdc-aave-vault-verify.md check 4): instead of asking the user to send
   USDC, mint 5 test USDC straight to the vault with the open Aave faucet:
   `cast send FAUCET "mint(address,address,uint256)" USDC VAULT 5000000 --account NAME --rpc-url RPC`
   (dry-run first with `cast call ... --from OWNER`). It is free and moves none
@@ -107,7 +107,7 @@ Sepolia differences, all of them:
 
 ## Inputs
 
-Fixed values are in [recipe.json](recipe.json) (Arbitrum One shown here; for
+Fixed values are in [setup.json](../assets/usdc-aave-vault/setup.json) (Arbitrum One shown here; for
 Sepolia use `networks.sepolia`). Verify each on chain before use and stop on
 any mismatch:
 
@@ -239,8 +239,8 @@ Nothing else goes in the catalog.
 
 ## Scripts
 
-[supply.ls](supply.ls), [withdraw.ls](withdraw.ls), [payout.ls](payout.ls) and
-[policy.ls](policy.ls) are templates. Copy them into the working project and
+[supply.ls](../assets/usdc-aave-vault/supply.ls), [withdraw.ls](../assets/usdc-aave-vault/withdraw.ls), [payout.ls](../assets/usdc-aave-vault/payout.ls) and
+[policy.ls](../assets/usdc-aave-vault/policy.ls) are templates. Copy them into the working project and
 replace `{{policyId}}` (bytes32), `{{vault}}`, `{{owner}}`, `{{usdc}}` and `{{pool}}`
 (addresses; `{{usdc}}` and `{{pool}}` are the network's USDC and Aave Pool), and in
 `policy.ls` also `{{supplyId}}`, `{{withdrawId}}`, `{{payoutId}}`. The CLI does
@@ -249,7 +249,7 @@ not interpolate. The parser accepts no comments.
 Each interaction takes one argument: the USDC amount in base units (6 decimals;
 1 USDC is `1000000`). The policy program caps it at `100000000`.
 
-Compile with the bundled ABIs ([erc20.json](erc20.json), [pool.json](pool.json)):
+Compile with the bundled ABIs ([erc20.json](../assets/usdc-aave-vault/erc20.json), [pool.json](../assets/usdc-aave-vault/pool.json)):
 
 ```sh
 chainwall compile supply.ls --abi circle/usdc=erc20.json --abi aave/pool-v3=pool.json --out supply.json
@@ -266,11 +266,11 @@ else.
 
 ## Resume: check state before any write
 
-People rerun this recipe after a partial attempt. If the profile binds no
+People rerun this setup after a partial attempt. If the profile binds no
 instance on the network's chain, nothing is done yet: skip this section and start at step 1.
 Otherwise run `chainwall status` and the reads below, with ids from
 `chainwall id`, and show the user a table of which steps are done. Skip a step
-only when its read shows exactly the recipe's values; if a read shows something
+only when its read shows exactly the setup's values; if a read shows something
 else (another vault, another member, a different program), stop and ask rather
 than overwrite.
 
@@ -288,12 +288,12 @@ values, not text.
 | 3 Group | `registry get-group-members GROUP` | `[["OWNER"]]` (exactly one member, case-insensitive) |
 | 3 Policy | `registry get-policy-criteria POLICY` | `[["GROUP"],["1"]]` |
 | 4 Vault | `registry get-account-count`, then `registry get-account-at 0` | count ≥ 1; the address is the vault (ask if count > 1) |
-| 5 Catalog | `registry get-address circle usdc`, `registry get-address aave pool-v3` | the recipe.json addresses |
+| 5 Catalog | `registry get-address circle usdc`, `registry get-address aave pool-v3` | the setup.json addresses |
 | 7 Publish | `registry get-policy-program POLICY`; `registry get-interaction-keys-page 0 10`; `interactions source ID` for each | program bytes nonempty; all three interaction ids present; each source shows this vault, policy and (payout) owner |
 | 8 Capability | `registry get-capability-groups CAP` | contains GROUP |
-| 9 Delays | `timelock get-category-config $(chainwall id timelock.category.NAME)` for every NAME in recipe.json | each is `[[86400,86400,86400,604800,"0x00…00"]]`. The factory default `[[0,2592000,0,2592000,"0x00…00"]]` (zero delay) means **not done**. `has-category-config` is true for both, so never use it to decide this row |
+| 9 Delays | `timelock get-category-config $(chainwall id timelock.category.NAME)` for every NAME in setup.json | each is `[[86400,86400,86400,604800,"0x00…00"]]`. The factory default `[[0,2592000,0,2592000,"0x00…00"]]` (zero delay) means **not done**. `has-category-config` is true for both, so never use it to decide this row |
 | Pending | `timelock get-pending-action-count` | `0`; otherwise list them with `timelock get-pending-action-summaries 0 50` and finish or cancel each before dependent steps |
-| Real run | `accounts activity VAULT` | a record with `interactionId` = the supply id and `caller` = OWNER means the real 1 USDC supply already ran: do not run it again (verify.md step 4) |
+| Real run | `accounts activity VAULT` | a record with `interactionId` = the supply id and `caller` = OWNER means the real 1 USDC supply already ran: do not run it again (usdc-aave-vault-verify.md step 4) |
 
 Steps 6 and 10 have no chain state of their own: rerun them.
 
@@ -309,14 +309,14 @@ still do step 9 on the real ids.
 `accounts activity` currently shows wrong block numbers, 2022 timestamps and
 `transactionHash: null` (seen on Arbitrum; a CLI defect). Use it only to see *that*
 an interaction ran and by whom; take hashes from logs (see Finish). The
-activity may also show withdraw or payout runs made outside this recipe; list
+activity may also show withdraw or payout runs made outside this setup; list
 them in the record as found, without judging them.
 
 ## Order
 
 The order is forced by the contracts; each line says why. Apply and verify each
-step on chain before the next. Follow [setup.md](../../references/setup.md) and
-[authoring.md](../../references/authoring.md) for command details. Those
+step on chain before the next. Follow [setup.md](setup.md) and
+[authoring.md](authoring.md) for command details. Those
 references use short aliases for some commands in this list (`groups add`,
 `groups add-member`, `policies add`); they are the same commands as
 `groups create-group`, `groups add-group-member` and `policies create-policy`.
@@ -363,7 +363,7 @@ command seems missing, check these before concluding it does not exist.
 4. Vault. `chainwall accounts create --salt "usdc-aave-vault v1"`. The caller
    must already be a user (step 3), and creation registers the account in the
    Registry in the same transaction, which is why `timelock.category.account`
-   is never delayed in this recipe. Record the address as `{{vault}}`.
+   is never delayed in this setup. Record the address as `{{vault}}`.
 5. Catalog, in this order. `orgs add` for `circle` and `aave` (optional for an
    admin, kept for readability). `orgs add` is `upsertOrg(string id, address
    owner_, bool rugged, address[] initialMembers)`; pass it as
@@ -425,7 +425,7 @@ command seems missing, check these before concluding it does not exist.
     `registry ownership-handover-completed`, `registry role-governance-enabled`,
     and `registry has-role ROLE OWNER` for the values of `registry admin-role`,
     `registry upgrader-role` and `registry default-admin-role`, and report them.
-    Do not call `finalize-owner-bootstrap`: it is out of scope for this recipe,
+    Do not call `finalize-owner-bootstrap`: it is out of scope for this setup,
     and neither the CLI help nor the manual names the grant it needs. If the
     user asks for it, say so and stop rather than guess a role or capability id.
 
@@ -435,12 +435,12 @@ If any write returns `queued`, finish that timelock action before the next step.
 
 Run every write with `--dry-run` first and show the output, then send it with
 `--account NAME` and the signing method chosen in Signer. Pause for the user's explicit yes at exactly two points:
-before accepting terms (step 2) and before the real 1 USDC supply (verify.md).
+before accepting terms (step 2) and before the real 1 USDC supply (usdc-aave-vault-verify.md).
 Never print keys or passwords.
 
 ## Prove it
 
-Follow [verify.md](verify.md). No local fork or node.
+Follow [usdc-aave-vault-verify.md](usdc-aave-vault-verify.md). No local fork or node.
 
 ## Finish
 
@@ -465,7 +465,7 @@ Build it from three parts, each from the reads, never assumed:
 Always end with: "Keep the owner key safe: whoever holds it can change the
 vault's rules."
 
-If a receipt or read shows an address the recipe does not name, list it as
+If a receipt or read shows an address the setup does not name, list it as
 "unidentified address seen in EVENT" rather than guessing what it is.
 
 Write the record for a reader who has never used Chainwall: one opening

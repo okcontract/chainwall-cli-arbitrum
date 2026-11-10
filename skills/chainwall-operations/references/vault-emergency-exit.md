@@ -1,7 +1,7 @@
-# Recipe: emergency exit and kill switch for the vault
+# Setup: emergency exit and kill switch for the vault
 
-Extends [usdc-aave-vault](../usdc-aave-vault/SKILL.md). Read `../../SKILL.md`
-and that recipe first; their rules apply. Take every flag from
+Extends [usdc-aave-vault](usdc-aave-vault.md). Read `../SKILL.md`
+and that setup first; their rules apply. Take every flag from
 `chainwall <command> --help --json`.
 
 ## Outcome
@@ -15,7 +15,7 @@ then pause.
 
 ## Prerequisites
 
-Vault recipe steps 1 to 8 done. If the policy or interaction delays are live,
+Vault setup steps 1 to 8 done. If the policy or interaction delays are live,
 the two writes below return `queued`; collect `actionId` and `eta`, execute
 after `eta`, then continue. Say so first. An exit path should exist before the
 delays are set, since adding one afterwards takes a day.
@@ -54,10 +54,10 @@ Compute every id with `chainwall id NAME`. Catalog: the existing entries.
 
 ## Scripts
 
-[exit.ls](exit.ls): fill `{{policyId}}`, `{{vault}}`, `{{usdc}}`, `{{cold}}`.
-[exit-policy.ls](exit-policy.ls): fill `{{policyId}}`, `{{vault}}`, `{{exitId}}`.
-Compile `exit.ls` with [erc20.json](erc20.json) (`transfer`, `balanceOf`) and
-[pool.json](pool.json) (`withdraw`); expected selectors `0x69328dec`,
+[exit.ls](../assets/vault-emergency-exit/exit.ls): fill `{{policyId}}`, `{{vault}}`, `{{usdc}}`, `{{cold}}`.
+[exit-policy.ls](../assets/vault-emergency-exit/exit-policy.ls): fill `{{policyId}}`, `{{vault}}`, `{{exitId}}`.
+Compile `exit.ls` with [erc20.json](../assets/vault-emergency-exit/erc20.json) (`transfer`, `balanceOf`) and
+[pool.json](../assets/vault-emergency-exit/pool.json) (`withdraw`); expected selectors `0x69328dec`,
 `0x70a08231`, `0xa9059cbb`, valid and complete. Compile the program with
 `policies program compile`.
 
@@ -69,7 +69,7 @@ Compile `exit.ls` with [erc20.json](erc20.json) (`transfer`, `balanceOf`) and
 3. `policies program publish usdc-vault-exit-policy exit-policy.json`.
 4. `interactions add exit.ls --id usdc-vault-exit --abi circle/usdc=erc20.json --abi aave/pool-v3=pool.json`.
 5. Execution rights already exist: `usdc-vault-approvers` holds
-   `cap.registry.interaction.execute` from the vault recipe; read
+   `cap.registry.interaction.execute` from the vault setup; read
    `registry get-capability-groups CAP` to confirm.
 6. Optional guardian: if the user names one, `users add GUARDIAN`,
    `groups create-group usdc-vault-guardians`, add the member, and
@@ -79,7 +79,7 @@ Compile `exit.ls` with [erc20.json](erc20.json) (`transfer`, `balanceOf`) and
 ## Signing and pauses
 
 Dry-run every write, show it, send with the owner's `--account`. Pause for the
-user's yes before step 4 and before any real exit or pause in verify.md.
+user's yes before step 4 and before any real exit or pause in vault-emergency-exit-verify.md.
 
 ## Finish
 

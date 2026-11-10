@@ -7,7 +7,7 @@
    → revert "caller is not a user".
 3. Exit drill (write, user's yes first). Only if the vault has an Aave position
    (`getReserveData(USDC)` aToken `balanceOf(VAULT)` > 0); if not, say the
-   drill needs a position and offer to run the vault recipe's 1 USDC supply
+   drill needs a position and offer to run the vault setup's 1 USDC supply
    first. `operations propose` `usdc-vault-exit`, args `[]`, safe VAULT,
    policyId the exit policy, deadline now + 86400, `--out exit.json`;
    `operations simulate exit.json --via account` → pass; execute. Read: vault
