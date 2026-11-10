@@ -1,0 +1,72 @@
+{
+  "setup": "protocol-admin",
+  "chainId": 42161,
+  "defaultRpc": "https://arb1.arbitrum.io/rpc",
+  "okFactory": "0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b",
+  "deploySalt": "protocol-admin v1",
+  "accountSalt": "protocol-admin v1",
+  "minSignerBalanceWei": "1500000000000000",
+  "target": {
+    "catalogPath": "myprotocol/params",
+    "org": "myprotocol",
+    "abi": "params.json",
+    "demoSource": "contract/GuardedParams.sol",
+    "address": "user supplied, or deploy the demo contract"
+  },
+  "groups": {
+    "admin-operators": "routine callers",
+    "admin-approvers": "sensitive approvers"
+  },
+  "policies": {
+    "admin-routine": {
+      "criteria": [
+        "admin-operators"
+      ],
+      "thresholds": [
+        1
+      ],
+      "program": "routine-policy.ls"
+    },
+    "admin-sensitive": {
+      "criteria": [
+        "admin-approvers"
+      ],
+      "thresholds": [
+        "number of approvers, at least 1"
+      ],
+      "program": "sensitive-policy.ls"
+    }
+  },
+  "interactions": {
+    "admin-set-fee": "set-fee.ls",
+    "admin-set-oracle": "set-oracle.ls"
+  },
+  "routineFeeCapBps": 1000,
+  "executeCapabilityGrantee": [
+    "group:admin-operators",
+    "group:admin-approvers"
+  ],
+  "timelockConfig": {
+    "minDelay": 86400,
+    "maxDelay": 86400,
+    "defaultDelay": 86400,
+    "gracePeriod": 604800,
+    "defaultPolicyId": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "timelockCategories": [
+    "timelock.category.interaction",
+    "timelock.category.activation",
+    "timelock.category.policy",
+    "timelock.category.capability",
+    "timelock.category.group",
+    "timelock.category.role.admin",
+    "timelock.category.diamond",
+    "timelock.category.config"
+  ],
+  "timelockCategoryIdRule": "category id = chainwall id <full name as listed>; never hash the bare suffix",
+  "interactionPublish": {
+    "admin-set-fee": "interactions add set-fee.ls --id admin-set-fee",
+    "admin-set-oracle": "interactions add set-oracle.ls --id admin-set-oracle"
+  },
+  "proposalDeadlineSeconds": 86400
+}

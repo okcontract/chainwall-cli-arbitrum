@@ -49,8 +49,10 @@ not the working directory.
   [vault-emergency-exit.md](references/vault-emergency-exit.md) (one
   owner-only exit to a cold address, plus pause),
   [vault-safe-backed.md](references/vault-safe-backed.md) (the same vault as a
-  guarded Safe with two owners). Each has a companion `*-verify.md` and its
-  templates under `assets/<name>/`.
+  guarded Safe with two owners). [protocol-admin.md](references/protocol-admin.md)
+  puts a protocol's owner role behind a Chainwall account, with routine
+  parameter changes separated from delayed sensitive changes. Each has a
+  companion `*-verify.md` and its templates under `assets/<name>/`.
 
 Read only the relevant references. The installed manual is normally
 `share/doc/chainwall/manual.md` beneath the distribution prefix; in a checkout,
