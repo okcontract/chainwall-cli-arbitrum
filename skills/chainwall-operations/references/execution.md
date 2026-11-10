@@ -90,6 +90,21 @@ Choose the existing Safe's supported route. `safes inspect` reports owners,
 threshold, guard/gateway and module state. Safe owner signatures and Interact
 policy approvals satisfy different checks.
 
+The actor signature (`sign-actor`) is checked with OpenZeppelin
+SignatureChecker: when the actor address has code it calls ERC-1271
+`isValidSignature` and never tries ecrecover. An EOA with an EIP-7702
+delegation has code (`cast code ACTOR` returns `0xef0100…`), and if the
+delegate does not implement `isValidSignature` every actor signature fails
+with `InvalidActorSignature`, which the Safe surfaces as `GS013`. Before the
+first Safe execution read `cast code ACTOR`: it must be `0x`, or the delegate
+must answer `isValidSignature`. If not, use another registered user with
+execute rights as the actor. Account-mode execution (`--via account`) uses
+the caller directly and is not affected.
+
+Safe revert strings: `GS020` signatures too short (fewer than threshold),
+`GS026` signer not an owner or signatures out of order, `GS013` the inner
+Interact call reverted (trace it: a policy, actor or target failure).
+
 For the owner-signed route:
 
 ```sh
