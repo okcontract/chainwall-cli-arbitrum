@@ -57,6 +57,5 @@
     "gracePeriod": 604800,
     "defaultPolicyId": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "executeCapabilityGrantee": "group:usdc-vault-approvers",
-  "writeRpc": "ask the user; the public endpoint times out on deploy stages"
+  "executeCapabilityGrantee": "group:usdc-vault-approvers"
 }

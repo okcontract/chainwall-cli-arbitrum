@@ -18,10 +18,7 @@ recipe adds other people or grants anything beyond the three interactions.
 Fixed values are in [recipe.json](recipe.json). Verify each on chain before use
 and stop on any mismatch:
 
-- Chain 42161. Reads may use `https://arb1.arbitrum.io/rpc`. For writes use a
-  reliable RPC: the public endpoint's slow receipts make the CLI's monitor time
-  out (`TransactionMonitorTimedOut`) on the large deploy stages. If the profile
-  has no RPC other than the public one, ask the user for one before deploying.
+- Chain 42161. RPC: the one in the profile, else `https://arb1.arbitrum.io/rpc`.
 - OKFactory `0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b`. It must equal the `to`
   address of `chainwall deploy --dry-run`.
 - USDC `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`: `symbol()` is USDC,
