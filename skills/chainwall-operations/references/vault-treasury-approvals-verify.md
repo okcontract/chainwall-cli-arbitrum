@@ -18,5 +18,12 @@
 5. Removed member (read-only reasoning, no write): state that removing
    APPROVER2 from the group would invalidate their standing approvals at
    execution time; do not perform it.
+6. Owner route closed (after step 8): `registry get-interaction-flags` of the
+   `usdc-vault-payout` id reads `2` (bit 1 set). Interact still accepts an
+   `operations propose` for it, so simulate that proposal with
+   `operations simulate --via account`: it fails with the decoded revert
+   `InteractionInactive(id)`; then `operations withdraw OPID` so no open
+   operation is left. If step 8 was `queued`, read the queued action instead
+   and state the eta.
 
 Record every command, decoded result and transaction hash.

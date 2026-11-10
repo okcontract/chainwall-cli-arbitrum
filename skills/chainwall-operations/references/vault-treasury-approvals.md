@@ -10,8 +10,9 @@ The vault can pay USDC to exactly two fixed recipients. Each payout needs
 approval from 2 of 3 people, is capped at 1000 USDC, and all payouts together
 are capped at 5000 USDC per 30 day window by a Registry policy meter. A payout
 to any other address is impossible: there is no interaction for it, and the
-Lambdascript recipient is a literal, not an argument. The owner alone can no
-longer pay anyone.
+Lambdascript recipient is a literal, not an argument. The vault setup's
+owner-only `usdc-vault-payout` interaction is deactivated in step 8, so the
+owner alone can no longer pay anyone; until step 8 runs it still can.
 
 
 ## Network
@@ -103,13 +104,22 @@ word, as in vault-bot-operator). Compile each `pay-*.ls` with
    for each recipient.
 7. `capabilities grant-capability-group` of `chainwall id cap.registry.interaction.execute`
    to the treasury group.
+8. `interactions deactivate usdc-vault-payout` (after the test payout in the
+   verify file, so the owner's own route is closed last). It sends
+   `setInteractionActive(bundleHash, id, false)` in the
+   `timelock.category.activation` category: immediate while that delay is 0,
+   `queued` once the vault's step 9 delays are live (then `timelock execute-action`
+   after the delay). Read back `registry get-interaction-flags` of
+   `chainwall id usdc-vault-payout`: bit 1 (`INACTIVE`) set. Skip with a note
+   if the user wants to keep the owner payout.
 
 Verify each step on chain before the next.
 
 ## Signing and pauses
 
 Dry-run every write, show it, send with the owner's `--account`. Pause for
-the user's yes before step 7 and before the real payout in vault-treasury-approvals-verify.md.
+the user's yes before step 7, before the real payout in
+vault-treasury-approvals-verify.md, and before step 8.
 
 ## Finish
 
@@ -117,7 +127,7 @@ Append to `usdc-vault-record.md`: group members, policy and interaction ids,
 recipients, caps, meter id, every transaction hash, and the approval sequence
 of the test payout. State: payouts go only to the two listed addresses, need
 two of three approvals, and are limited to 1000 USDC each and 5000 USDC per
-30 day window.
+30 day window; the owner-only payout is deactivated (or say that it was kept).
 
 Then finish the vault's protection if it is still open: if the vault setup's
 step 9 delays are not set (`timelock get-category-config` on the full category
