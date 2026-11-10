@@ -12,7 +12,7 @@ visible, delayed rule like any other.
 ## Inputs
 
 Ask for the other governors' addresses (none is allowed: OWNER alone, held
-explicitly) and whether each signs on this machine.
+explicitly). They sign nothing in this setup.
 
 ## Mechanics the user should hear first
 
@@ -34,7 +34,8 @@ explicitly) and whether each signs on this machine.
 2. `groups create-group $(chainwall id governors)`; add OWNER and each
    governor; read the members.
 3. `capabilities grant-capability-group $(chainwall id cap.registry.timelock.write) GROUP`;
-   `capabilities has-capability CAP OWNER` must read true.
+   `capabilities has-capability CAP ADDR` must read true for OWNER and each
+   governor.
 4. Read `capabilities owner-bootstrap-finalized`: false. Show the user what
    step 5 removes and that it cannot be undone.
 5. `capabilities finalize-owner-bootstrap` (OWNER signs). Read

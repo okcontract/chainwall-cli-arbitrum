@@ -1,6 +1,6 @@
 # Verify gov-handover
 
-All read-only. CFG is any valid category config tuple; CAT is
+Checks 1 to 4 are read-only. CFG is any valid category config tuple; CAT is
 `chainwall id timelock.category.user`.
 
 1. `capabilities owner-bootstrap-finalized` true.
@@ -11,5 +11,6 @@ All read-only. CFG is any valid category config tuple; CAT is
    does not revert; from CANARY it reverts `OwnableUnauthorizedAccount`.
 4. `capabilities get-capability-groups $(chainwall id cap.registry.timelock.write)`
    lists exactly the `governors` id.
+5. Delay proof (governance.md), ACTOR = OWNER.
 
 Record every command and result.

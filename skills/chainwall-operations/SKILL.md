@@ -69,8 +69,9 @@ not the working directory.
   (narrow groups for routine admin jobs),
   [gov-admin-rotation.md](references/gov-admin-rotation.md) (add or replace an
   admin through a delayed change), [gov-handover.md](references/gov-handover.md)
-  (close the owner shortcut for good). Each
-  has a companion `*-verify.md` and its templates under `assets/<name>/`.
+  (close the owner shortcut for good). Each setup
+  has a companion `*-verify.md`; templates and fixed values are under
+  `assets/<name>/` (`assets/governance/` for the governance setups).
 
 Read only the relevant references. The installed manual is normally
 `share/doc/chainwall/manual.md` beneath the distribution prefix; in a checkout,
@@ -129,7 +130,7 @@ These hold on the current CLI; none of them is a failed setup.
 - `chainwall status` may report `"complete": false` (the `securityCouncil`
   read reverts) or `"status": "unavailable"` with `RpcHttpFailure`. Treat the
   instance as complete when `getInstance(address)` on the factory, called
-  with the Registry address, returns a nonzero Interact.
+  with the Registry address, returns a nonzero Interact (the address the profile saves as `interact`).
 - A write that ends in a bare `TransactionFailed` with no hash: read
   `cast nonce SIGNER`. Unchanged means nothing was broadcast; resend once.
   Changed means it was sent; recover the receipt, never resend. The same

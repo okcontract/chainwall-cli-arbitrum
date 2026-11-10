@@ -6,7 +6,9 @@ Shared mechanics: [governance.md](governance.md). Record: `gov-approved-changes-
 
 Every rule change waits DELAY and needs THRESHOLD approvals from a
 `governors` group before it can execute. One key, the owner's included, can
-queue a change but cannot make it happen.
+queue a change but cannot make it happen. Outside this: account creation
+stays undelayed, `roles pause` is immediate, and an admin can still cancel a
+queued change.
 
 ## Inputs
 

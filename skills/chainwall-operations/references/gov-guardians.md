@@ -20,7 +20,8 @@ means nothing) and whether each signs on this machine.
 - `cap.registry.timelock.cancel` cancels queued actions, except one that
   revokes that same capability, so a bad guardian can always be removed.
 - `cap.interact.operation.cancel` cancels a pending Interact operation
-  (otherwise only its submitter can).
+  (otherwise only its submitter can). It is granted here but not drilled:
+  that needs a vault with an open operation.
 
 ## Order
 

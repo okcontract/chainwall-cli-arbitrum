@@ -29,11 +29,15 @@ none is a valid answer.
 
 ## Order
 
-1. Instance, terms; `users add` OWNER.
+1. Instance, terms; `users add` OWNER and `users add CANARY` (the membership
+   drill needs CANARY to be a user; governance.md explains why that is
+   harmless).
 2. `groups create-group $(chainwall id governors)` and add OWNER, unless the
-   group exists.
-3. Overrides: one `set-scope-override` for category `group`, scope the
-   `governors` id, and one per extra item. Read each with
+   group exists. This setup gives the group no power; it is the group the
+   other governance setups grant power to.
+3. Overrides: one `set-scope-override` for category
+   `chainwall id timelock.category.group`, scope the `governors` id, and one
+   per extra item. Read each with
    `timelock get-scope-override CATEGORY SCOPE`.
 4. Delays (governance.md) for the ten categories, then `config` with
    `($LONG,2592000,$LONG,604800,$POLICY)` instead of DELAY.
