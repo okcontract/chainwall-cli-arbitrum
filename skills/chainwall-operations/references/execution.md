@@ -70,6 +70,15 @@ reverts, and broadcasts nothing. Correct a rejected policy or authorization;
 do not weaken it simply to make simulation pass. State changes between
 simulation and execution can invalidate the result.
 
+A raw revert starting `0x80cf34d4` is the script engine's `FailWord(bytes6)`;
+the next six bytes are an ASCII tag. `ERR_01` is a failed `$require` (the
+policy or interaction rejected the context), `ERR_02` a registry lookup or
+allowlist failure (the target or interaction is not registered, not in a
+policy, or unavailable), `ERR_04` a failed external call (the target contract
+itself reverted, so check that call directly, for example with `cast call
+--from VAULT`), `ERR_09` the native value cap exceeded, `ERR_03` work limit
+exceeded, `ERR_00` short return data, `ERR_05` to `ERR_08` malformed bytecode.
+
 After submission, inspect the receipt, execution event and intended state
 change, such as recipient and vault balances. Use a fresh read for final
 verification. An operation becoming `closed` alone is insufficient evidence:
