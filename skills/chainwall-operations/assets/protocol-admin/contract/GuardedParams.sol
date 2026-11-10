@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// Demo target for the protocol-admin recipe. Not audited. Replace with your
+/// Demo target for the protocol-admin setup. Not audited. Replace with your
 /// own contract address and ABI for real use.
 contract GuardedParams {
     address public owner;
