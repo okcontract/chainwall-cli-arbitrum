@@ -58,5 +58,20 @@
     "defaultPolicyId": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
   "executeCapabilityGrantee": "group:usdc-vault-approvers",
-  "timelockCategoryIdRule": "category id = chainwall id <full name as listed>, e.g. chainwall id timelock.category.policy; never hash the bare suffix"
+  "timelockCategoryIdRule": "category id = chainwall id <full name as listed>, e.g. chainwall id timelock.category.policy; never hash the bare suffix",
+  "interactionPublish": {
+    "usdc-vault-supply": "interactions add supply.ls --id usdc-vault-supply",
+    "usdc-vault-withdraw": "interactions add withdraw.ls --id usdc-vault-withdraw",
+    "usdc-vault-payout": "interactions add payout.ls --id usdc-vault-payout"
+  },
+  "tokenRecord": {
+    "org": "circle",
+    "id": "usdc",
+    "symbol": "USDC",
+    "decimals": 6,
+    "price": "0x0000000000000000000000000000000000000000",
+    "priceFeedDecimals": 0,
+    "requires": "contract version circle/usdc first"
+  },
+  "proposalDeadlineSeconds": 86400
 }

@@ -2,6 +2,7 @@
 
 Read `../../SKILL.md` first. Its rules on profiles, dry runs, signing and
 "never invent a command, selector or address" apply throughout this recipe.
+Take every command's exact flags from `chainwall <command> --help --json`.
 
 ## Outcome
 
@@ -30,39 +31,25 @@ Ask the user for nothing else. The only user-specific value is the signer.
 
 ## Signer
 
-Use the signer configured in the Chainwall profile: `chainwall config show`
-prints `account` (and `password_file` if set). Do not print, open or copy the
-password file. Agent shells usually have no TTY, so Foundry cannot prompt for a
-password there (`Device not configured`). If the profile has no `password_file`,
-stop before the first write and tell the user to either create one themselves
-(`chainwall config set password_file PATH`, file mode 0600) or run each signed
-command in their own terminal. Never accept a password in chat. Get the owner address with
-`cast wallet address --account NAME` (add `--password-file PATH` only when the
-profile has one; otherwise Foundry prompts the user).
+Resolve the keystore as the base skill says: `cast wallet list`; one entry is
+the signer, several means ask, none means stop. Pass it as `--account NAME` on
+every write. The owner address comes from `cast wallet address --account NAME`,
+or from the user if the keystore cannot be unlocked in this shell. No password
+in chat, no password file; Touch ID enrollment or the user's own terminal for
+signatures.
 
-If no account is configured, run `cast wallet list`. If it shows accounts, ask
-the user which one to use. If it is empty, stop and tell the user to run one of
-these in their own terminal, then `chainwall config set account NAME`:
-
-```sh
-cast wallet new NAME
-cast wallet import NAME --interactive
-```
-
-Check any Foundry command with `cast <command> --help` before showing it.
 The signer needs ETH on Arbitrum One for about 20 transactions. Read its
 balance with `cast balance OWNER --rpc-url RPC` and stop if it is below
-0.0015 ETH. The real cost is small, but the deploy stages reserve
-`gasLimit x maxFeePerGas` up front (stages run 16M to 48M gas), so a stage can be
-rejected on balance even when the fee is affordable. If that happens, send that
-stage with `cast send` and an explicit tight `--gas-limit` and `--gas-price`,
-then bind the instance with `chainwall login ADDRESS`.
+0.0015 ETH. The fee is small, but a send reserves `gasLimit x maxFeePerGas` up
+front and the factory stages are large (stage 1 estimates around 16.5M gas), so
+a stage can be refused on balance while the fee itself is affordable. If that
+happens, send that stage with `cast send` and an explicit tight `--gas-limit`
+and `--gas-price`, then bind the instance with `chainwall login ADDRESS`.
 
 ## Profile
 
-The user's default profile may be on another chain. Create and select a profile
-named `usdc-vault`, set `chain 42161`, the RPC, and the same `account` and
-`password_file` values. Leave the default profile unchanged.
+Create and select a Chainwall profile named `usdc-vault` with `chain 42161`,
+the RPC, and `account NAME`. Leave other profiles unchanged.
 
 ## Names
 
@@ -97,66 +84,83 @@ chainwall analyze supply.json
 chainwall policies program compile policy.ls --out policy.json
 ```
 
-Repeat for withdraw and payout. Show the user the targets, selectors and
-warnings from each analysis. Expected selectors: supply `0x095ea7b3` then
-`0x617ba037`; withdraw `0x69328dec`; payout `0xa9059cbb`. Stop if an analysis
-is invalid, incomplete, or targets anything else.
+Repeat for withdraw and payout. Named `@contract` and `@token` references
+resolve against the connected Registry, so this runs after step 5 below. Show
+the user the targets, selectors and warnings from each analysis. Expected
+selectors: supply `0x095ea7b3` then `0x617ba037`; withdraw `0x69328dec`; payout
+`0xa9059cbb`. Stop if an analysis is invalid, incomplete, or targets anything
+else.
 
 ## Order
 
-Apply and verify each step on chain before the next. Follow
-[setup.md](../../references/setup.md) and [authoring.md](../../references/authoring.md)
-for exact commands.
+The order is forced by the contracts; each line says why. Apply and verify each
+step on chain before the next. Follow [setup.md](../../references/setup.md) and
+[authoring.md](../../references/authoring.md) for command details.
 
-1. Instance. If the profile already binds an instance on 42161, reuse it and
-   skip to step 2. Otherwise run `chainwall instances discover` for the signer:
-   if a bootstrapped instance exists, resume its missing stages with
-   `chainwall deploy --stage prepare|finalize --registry ADDRESS`; if it is
-   complete, `chainwall login ADDRESS`. Only when nothing exists run
-   `chainwall deploy` through the OKFactory, owner = the signer,
-   `--indexing --no-auth-accounts --salt "usdc-aave-vault v1"`. The fixed salt
-   makes the instance address deterministic for a given owner, but `deploy`
-   does not resume on its own: rerunning it against an existing instance
-   returns `DeploymentAlreadyStarted`, which is the signal to take the discover
-   path above. Deploy runs three stages; if the CLI broadcasts a stage and then
-   times out waiting for the receipt, do not resend: confirm the stage by nonce
-   and receipt, read the registry address from the stage-1 logs, and resume by
-   stage with a distinct `--out` file per stage (`PathAlreadyExists` otherwise).
-2. Download and show the terms document and its hash (`terms document --out`).
-   If the default IPFS gateway fails, retry with
-   `--ipfs-gateway https://gateway.pinata.cloud/ipfs`. Accept only after the
-   user says yes.
-3. Add the owner as a user, create the group, add the owner, create the policy.
-4. `chainwall accounts create` the OKAccount with the same salt phrase as the
-   deploy, so the vault address is deterministic too. Record it as `{{vault}}`.
-5. Register orgs `circle` and `aave`, the Pool contract version, the USDC
-   contract version and token record.
-6. Fill the templates, compile, analyze, show results. This step cannot run
-   before step 4 because `{{vault}}` is the OKAccount address.
-7. Publish the policy program to `usdc-vault-policy`, then the three
-   interactions under their ids.
-8. Grant `cap.registry.interaction.execute` to the group
-   `usdc-vault-approvers`, not to the owner address: actor grants revert with
-   `ActorCapabilityNotSystem`. Show the dry run first.
-9. Last, set each timelock category listed in recipe.json to
-   `(minDelay 86400, maxDelay 86400, defaultDelay 86400, gracePeriod 604800,
-   defaultPolicyId 0x0)` and read each back with `get-category-config`. The
-   category id is `chainwall id` of the full name, for example
+1. Instance. If the profile already binds an instance on 42161, reuse it and go
+   to step 2. Otherwise run `chainwall deploy --dry-run` with
+   `--owner OWNER --indexing --no-auth-accounts --salt "usdc-aave-vault v1"`,
+   confirm `to` is the OKFactory, then send it. `deploy` runs three stages
+   (bootstrap, prepare, finalize). It does not resume: if this owner and salt
+   were deployed before it fails with `DeploymentAlreadyStarted` and prints the
+   Registry address. Then read `getInstance(address)` on the factory: a nonzero
+   `interact` means the instance is complete, so `chainwall login ADDRESS`;
+   zero means resume with `chainwall deploy --stage prepare --registry ADDRESS`
+   then `--stage finalize --registry ADDRESS`, each with its own `--out` file
+   (`PathAlreadyExists` otherwise). If a stage broadcasts and the CLI times out
+   waiting for the receipt, do not resend: confirm the stage by nonce and
+   receipt, then resume the same way.
+2. Terms. `chainwall terms document --out terms.md`, show the document and its
+   hash (retry with `--ipfs-gateway https://gateway.pinata.cloud/ipfs` if the
+   default gateway fails). Accept with `terms accept-terms HASH` only after the
+   user says yes. Nothing executes until the instance has accepted its initial
+   terms.
+3. Users, group, policy, in this order: `users add OWNER` (membership requires
+   an existing user); `groups create-group` for `usdc-vault-approvers`;
+   `groups add-group-member GROUP OWNER`; `policies create-policy` for
+   `usdc-vault-policy` with group ids `[GROUP]` and thresholds `[1]` (every group
+   in a policy must already exist).
+4. Vault. `chainwall accounts create --salt "usdc-aave-vault v1"`. The caller
+   must already be a user (step 3), and creation registers the account in the
+   Registry in the same transaction, which is why `timelock.category.account`
+   is never delayed in this recipe. Record the address as `{{vault}}`.
+5. Catalog, in this order. `orgs add` for `circle` and `aave` (optional for an
+   admin, kept for readability). `contracts add` for `aave/pool-v3` with the
+   Pool address, and for `circle/usdc` with the USDC address; `version` and
+   `label` are bytes32, use `0x…01`, implementation `0x0`. Then
+   `tokens upsert-token` for `circle/usdc` with
+   `("circle","usdc","USDC",6,0x0000000000000000000000000000000000000000,0)`.
+   The token write reverts `TokenContractMissing` unless the `circle/usdc`
+   contract version exists first; a zero feed requires `priceFeedDecimals` 0.
+6. Fill the templates, compile, analyze, show results.
+7. Publish. `policies program publish usdc-vault-policy policy.json`, then
+   `interactions add supply.ls --id usdc-vault-supply --abi circle/usdc=erc20.json --abi aave/pool-v3=pool.json`
+   and the same for withdraw and payout with their ids. `--id` is required:
+   without it the id is the file stem (`supply`), which the policy program does
+   not allow.
+8. Execute capability. `capabilities grant-capability-group` with capability
+   `chainwall id cap.registry.interaction.execute` and the group hash. Grant to
+   the group, never to the owner address: actor grants are only for system
+   contracts and revert `ActorCapabilityNotSystem`.
+9. Delays, last. For each category in recipe.json, `timelock set-category-config`
+   with `(86400, 86400, 86400, 604800, 0x0000000000000000000000000000000000000000000000000000000000000000)`,
+   then `timelock get-category-config` to read it back. The category id is
+   `chainwall id` of the full name, for example
    `chainwall id timelock.category.policy`; the bare suffix hashes to a
    different, meaningless id. Set `timelock.category.config` last of all: it
    governs the others, and any delay set earlier queues the remaining setup.
-10. Read `ownerBootstrapFinalized` and the owner's roles and capabilities, and
-   report them. Do not call `finalize-owner-bootstrap` unless the user asks;
-   say in the record whether the owner's bootstrap authority is still open.
+10. Governance state. Read `ownerBootstrapFinalized` and the owner's roles and
+    capabilities, and report them. Do not call `finalize-owner-bootstrap`
+    unless the user asks.
 
 If any write returns `queued`, finish that timelock action before the next step.
 
 ## Signing and pauses
 
 Run every write with `--dry-run` first and show the output, then send it with
-the profile signer. Pause for the user's explicit yes at exactly two points:
+`--account NAME`. Pause for the user's explicit yes at exactly two points:
 before accepting terms (step 2) and before the real 1 USDC supply (verify.md).
-Never print keys, passwords or the password file.
+Never print keys or passwords.
 
 ## Prove it
 
@@ -167,7 +171,9 @@ Follow [verify.md](verify.md). No local fork or node.
 Write `usdc-vault-record.md`: chain ID, every address, `chainwall --version`,
 every transaction hash, and the configuration read back from chain (users,
 group, policy, catalog, interactions, timelock delays). Add a table of what the
-vault can and cannot do, and state that until `finalizeOwnerBootstrap` runs
-(which needs role governance, a completed ownership handover and an explicit
-`TIMELOCK_GOVERNOR` grant) the owner key is the implicit timelock governor: the
-delays bound operators, not the owner. If the CLI cannot do a step, stop and name it.
+vault can and cannot do, and state this: the factory already enabled role
+governance and completed the ownership handover, and the owner holds
+`ADMIN_ROLE` and `UPGRADER_ROLE`; until `finalizeOwnerBootstrap` runs, which
+needs an explicit `TIMELOCK_GOVERNOR` grant to a group the owner is in, the owner
+key is the implicit timelock governor, so the delays bound operators, not the
+owner. If the CLI cannot do a step, stop and name it.

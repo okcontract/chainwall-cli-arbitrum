@@ -35,10 +35,10 @@ not the working directory.
   owner signatures: read [execution.md](references/execution.md).
 - Portfolio reporting, unattended operation, journal sharing, passkeys,
   recovery, or upgrades: read [operations.md](references/operations.md).
-- A complete, tested end-to-end build with fixed inputs: open the matching
-  recipe under [recipes/](recipes/). `usdc-aave-vault` builds a guarded USDC
-  vault on Arbitrum One that can only supply to and withdraw from Aave v3 and
-  pay out to its owner. Read this file first, then the recipe's SKILL.md.
+- A complete end-to-end build with fixed inputs: open the matching recipe
+  under [recipes/](recipes/) after reading this file.
+  `usdc-aave-vault`: a guarded USDC vault that can only supply to and withdraw
+  from Aave v3 and pay out to its owner.
 
 Read only the relevant references. The installed manual is normally
 `share/doc/chainwall/manual.md` beneath the distribution prefix; in a checkout,
@@ -59,21 +59,24 @@ capability. Use `chainwall artifacts` for protocol artifacts.
 
 ## Check the signer first
 
-The CLI signs through Foundry `cast`. Before the first write, run
-`chainwall config show` and `cast wallet list`. Use the profile's configured
-`account`; if the profile has a `password_file`, writes run unattended,
-otherwise Foundry prompts the user for the password. If no account is
-configured and `cast wallet list` is empty, stop and give the user these
-commands to run in their own terminal, then `chainwall config set account NAME`:
+The CLI signs through Foundry `cast` with a named keystore. Before the first
+write, run `cast wallet list`:
 
-```sh
-cast wallet new NAME
-cast wallet import NAME --interactive
-```
+- one keystore: use it, as `--account NAME` on every write.
+- several: ask the user which one.
+- none: stop and tell the user to run `cast wallet new NAME` (or
+  `cast wallet import NAME --interactive`) in their own terminal.
 
-Check any Foundry command with `cast <command> --help` before showing it. Never
-ask for, read, print or store a private key, password or password file. The
-signer needs native currency for gas on the selected chain.
+Read the owner address with `cast wallet address --account NAME`; if that
+cannot unlock the keystore (no TTY, `Device not configured`), ask the user for
+the address instead. Agent shells usually have no TTY, so Foundry cannot prompt
+for a password there. On macOS the
+user can enroll the keystore once with `cast wallet touch-id enroll NAME`; each
+signature then asks for Touch ID. Otherwise the user runs the signed commands
+in their own terminal when you hand them over. Never accept a password in chat,
+and never read, create or print a password file. Check any Foundry command with
+`cast <command> --help` before showing it. The signer needs native currency for
+gas.
 
 ## Preserve the execution model
 
