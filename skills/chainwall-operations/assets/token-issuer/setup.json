@@ -1,0 +1,16 @@
+{
+  "setup": "token-issuer",
+  "standalone": true,
+  "target": { "catalogPath": "myproject/token", "org": "myproject", "abi": "token.json", "demoSource": "contract/GuardedToken.sol", "address": "user supplied, or deploy the demo token" },
+  "groups": { "token-minters": "operational minters", "token-admins": "burn and pause" },
+  "policies": {
+    "token-minter-policy": { "criteria": ["token-minters"], "thresholds": [1], "program": "minter-policy.ls" },
+    "token-admin-policy":  { "criteria": ["token-admins"], "thresholds": ["group size, at least 1"], "program": "admin-policy.ls" }
+  },
+  "accountSalt": "token-issuer v1",
+  "interactions": { "token-mint": "mint.ls", "token-burn": "burn.ls", "token-pause": "pause.ls" },
+  "mintCapBaseUnits": "1000000000000000000000",
+  "dailyMintLimitBaseUnits": "5000000000000000000000",
+  "meter": { "id": "token-mint-daily", "windowSeconds": 86400, "selector": "0x4671fe19" },
+  "executeCapabilityGrantee": ["group:token-minters", "group:token-admins"]
+}

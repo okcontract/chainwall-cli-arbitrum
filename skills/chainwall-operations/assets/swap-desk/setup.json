@@ -1,0 +1,15 @@
+{
+  "setup": "swap-desk",
+  "standalone": true,
+  "group": "swap-desk-traders",
+  "policy": { "name": "swap-desk-policy", "criteria": ["swap-desk-traders"], "thresholds": [1], "program": "policy.ls" },
+  "accountSalt": "swap-desk v1",
+  "interactions": { "swap-desk-weth-to-usdc": "weth-to-usdc.ls", "swap-desk-usdc-to-weth": "usdc-to-weth.ls" },
+  "fee": 500,
+  "capWethIn": "10000000000000000",
+  "capUsdcIn": "100000000",
+  "networks": {
+    "arbitrum-one": { "chainId": 42161, "router": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45", "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984", "weth": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "pool500": "0xC6962004f452bE9203591991D15f6b388e09E8D0" },
+    "sepolia": { "chainId": 11155111, "router": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E", "factory": "0x0227628f3F023bb0B980b67D528571c95c6DaC1c", "weth": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14", "usdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "usdcNote": "Circle's Sepolia USDC, the one Uniswap pools use; not Aave's test USDC", "pool500": "0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1" }
+  }
+}

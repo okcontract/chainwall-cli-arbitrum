@@ -1,6 +1,6 @@
 ---
 name: chainwall-operations
-description: Set up and operate Chainwall vaults, Safes, and onchain automation on Arbitrum One through the native CLI. Use for tenant onboarding, holdings reports, Lambdascript interactions, approval policies, execution, operational recovery, and complete builds such as a guarded USDC vault on Aave v3, a bot operator with a daily budget, two-approval treasury payouts, an emergency exit, a guarded Safe, a timelocked cap change, or putting a protocol's admin role behind Chainwall.
+description: Set up and operate Chainwall vaults, Safes, and onchain automation on Arbitrum One through the native CLI. Use for tenant onboarding, holdings reports, Lambdascript interactions, approval policies, execution, operational recovery, and complete builds such as a guarded USDC vault on Aave v3, a bot operator with a daily budget, two-approval treasury payouts, an emergency exit, a guarded Safe, a timelocked cap change, putting a protocol's admin role behind Chainwall, an ETH treasury that wraps to WETH and pays fixed recipients, a Uniswap v3 swap desk, or a token issuer with a metered minter.
 ---
 
 # Operate Chainwall
@@ -51,8 +51,15 @@ not the working directory.
   [vault-safe-backed.md](references/vault-safe-backed.md) (the same vault as a
   guarded Safe with two owners). [protocol-admin.md](references/protocol-admin.md)
   puts a protocol's owner role behind a Chainwall account, with routine
-  parameter changes separated from delayed sensitive changes. Each has a
-  companion `*-verify.md` and its templates under `assets/<name>/`.
+  parameter changes separated from delayed sensitive changes. Standalone
+  builds that do not involve Aave or USDC, each on its own instance:
+  [eth-treasury.md](references/eth-treasury.md) (an ETH treasury that wraps
+  to and unwraps from WETH and pays WETH to fixed recipients under a cap),
+  [swap-desk.md](references/swap-desk.md) (a desk that can only swap WETH
+  and USDC through Uniswap v3 back to itself, with a minimum-out argument),
+  [token-issuer.md](references/token-issuer.md) (a demo ERC-20 whose minter
+  is metered per 24 hours and whose burn and pause stay owner-only). Each
+  has a companion `*-verify.md` and its templates under `assets/<name>/`.
 
 Read only the relevant references. The installed manual is normally
 `share/doc/chainwall/manual.md` beneath the distribution prefix; in a checkout,
