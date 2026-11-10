@@ -48,5 +48,15 @@
     "config"
   ],
   "deploySalt": "usdc-aave-vault v1",
-  "minSignerBalanceWei": "1500000000000000"
+  "minSignerBalanceWei": "1500000000000000",
+  "accountSalt": "usdc-aave-vault v1",
+  "timelockConfig": {
+    "minDelay": 86400,
+    "maxDelay": 86400,
+    "defaultDelay": 86400,
+    "gracePeriod": 604800,
+    "defaultPolicyId": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "executeCapabilityGrantee": "group:usdc-vault-approvers",
+  "writeRpc": "ask the user; the public endpoint times out on deploy stages"
 }

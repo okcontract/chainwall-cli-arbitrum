@@ -18,7 +18,10 @@ recipe adds other people or grants anything beyond the three interactions.
 Fixed values are in [recipe.json](recipe.json). Verify each on chain before use
 and stop on any mismatch:
 
-- Chain 42161. RPC `https://arb1.arbitrum.io/rpc` unless the user gives another.
+- Chain 42161. Reads may use `https://arb1.arbitrum.io/rpc`. For writes use a
+  reliable RPC: the public endpoint's slow receipts make the CLI's monitor time
+  out (`TransactionMonitorTimedOut`) on the large deploy stages. If the profile
+  has no RPC other than the public one, ask the user for one before deploying.
 - OKFactory `0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b`. It must equal the `to`
   address of `chainwall deploy --dry-run`.
 - USDC `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`: `symbol()` is USDC,
@@ -32,7 +35,11 @@ Ask the user for nothing else. The only user-specific value is the signer.
 
 Use the signer configured in the Chainwall profile: `chainwall config show`
 prints `account` (and `password_file` if set). Do not print, open or copy the
-password file. Get the owner address with
+password file. Agent shells usually have no TTY, so Foundry cannot prompt for a
+password there (`Device not configured`). If the profile has no `password_file`,
+stop before the first write and tell the user to either create one themselves
+(`chainwall config set password_file PATH`, file mode 0600) or run each signed
+command in their own terminal. Never accept a password in chat. Get the owner address with
 `cast wallet address --account NAME` (add `--password-file PATH` only when the
 profile has one; otherwise Foundry prompts the user).
 
@@ -48,8 +55,11 @@ cast wallet import NAME --interactive
 Check any Foundry command with `cast <command> --help` before showing it.
 The signer needs ETH on Arbitrum One for about 20 transactions. Read its
 balance with `cast balance OWNER --rpc-url RPC` and stop if it is below
-0.0015 ETH (three factory stages are about 16M gas each; measure with
-`cast estimate` at the current gas price if in doubt).
+0.0015 ETH. The real cost is small, but the deploy stages reserve
+`gasLimit x maxFeePerGas` up front (stages run 16M to 48M gas), so a stage can be
+rejected on balance even when the fee is affordable. If that happens, send that
+stage with `cast send` and an explicit tight `--gas-limit` and `--gas-price`,
+then bind the instance with `chainwall login ADDRESS`.
 
 ## Profile
 
@@ -104,22 +114,32 @@ for exact commands.
 1. `chainwall deploy` through the OKFactory, owner = the signer,
    `--indexing --no-auth-accounts --salt "usdc-aave-vault v1"`. The salt is
    fixed so the same owner always resolves to the same instance; rerunning the
-   recipe resumes that instance instead of deploying a second one.
-2. Download and show the terms document and its hash. Accept only after the
+   recipe resumes that instance instead of deploying a second one. Deploy runs
+   three stages (bootstrap, prepare, finalize). If the CLI broadcasts a stage
+   and then times out waiting for the receipt, do not resend: confirm the stage
+   by nonce and receipt, read the registry address from the stage-1 logs, and
+   resume with `--stage prepare` / `--stage finalize --registry ADDRESS`, using
+   a distinct `--out` file per stage (`PathAlreadyExists` otherwise).
+2. Download and show the terms document and its hash (`terms document --out`).
+   If the default IPFS gateway fails, retry with
+   `--ipfs-gateway https://gateway.pinata.cloud/ipfs`. Accept only after the
    user says yes.
 3. Add the owner as a user, create the group, add the owner, create the policy.
-4. `chainwall accounts create` the OKAccount. Record its address as `{{vault}}`.
+4. `chainwall accounts create` the OKAccount with the same salt phrase as the
+   deploy, so the vault address is deterministic too. Record it as `{{vault}}`.
 5. Register orgs `circle` and `aave`, the Pool contract version, the USDC
    contract version and token record.
 6. Fill the templates, compile, analyze, show results. This step cannot run
    before step 4 because `{{vault}}` is the OKAccount address.
 7. Publish the policy program to `usdc-vault-policy`, then the three
    interactions under their ids.
-8. Check the owner holds `cap.registry.interaction.execute`. If not, show the
-   grant and wait for yes.
-9. Last, set a 1 day delay (86400 seconds) on the timelock categories listed in
-   recipe.json and read each back. Setting delays earlier queues the setup
-   behind them.
+8. Grant `cap.registry.interaction.execute` to the group
+   `usdc-vault-approvers`, not to the owner address: actor grants revert with
+   `ActorCapabilityNotSystem`. Show the dry run first.
+9. Last, set each timelock category listed in recipe.json to
+   `(minDelay 86400, maxDelay 86400, defaultDelay 86400, gracePeriod 604800,
+   defaultPolicyId 0x0)` and read each back. Set `config` last of all: it
+   governs the others, and any delay set earlier queues the remaining setup.
 
 If any write returns `queued`, finish that timelock action before the next step.
 
