@@ -1,6 +1,6 @@
 ---
 name: chainwall-operations
-description: Set up and operate Chainwall vaults, Safes, and onchain automation on Arbitrum One through the native CLI. Use for tenant onboarding, holdings reports, Lambdascript interactions, approval policies, execution, operational recovery, and complete builds such as a guarded USDC vault on Aave v3, a bot operator with a daily budget, two-approval treasury payouts, an emergency exit, a guarded Safe, a timelocked cap change, putting a protocol's admin role behind Chainwall, an ETH treasury that wraps to WETH and pays fixed recipients, a Uniswap v3 swap desk, or a token issuer with a metered minter.
+description: Set up and operate Chainwall vaults, Safes, and onchain automation on Arbitrum One through the native CLI. Use for tenant onboarding, holdings reports, Lambdascript interactions, approval policies, execution, operational recovery, and complete builds such as a guarded USDC vault on Aave v3, a bot operator with a daily budget, two-approval treasury payouts, an emergency exit, a guarded Safe, a timelocked cap change, putting a protocol's admin role behind Chainwall, an ETH treasury that wraps to WETH and pays fixed recipients, a Uniswap v3 swap desk, a token issuer with a metered minter, or tenant governance (guardians, approved rule changes, tiered delays, delegated admin, admin rotation, owner handover).
 ---
 
 # Operate Chainwall
@@ -58,7 +58,18 @@ not the working directory.
   [swap-desk.md](references/swap-desk.md) (a desk that can only swap WETH
   and USDC through Uniswap v3 back to itself, with a minimum-out argument),
   [token-issuer.md](references/token-issuer.md) (a demo ERC-20 whose minter
-  is metered per 24 hours and whose burn and pause stay owner-only). Each
+  is metered per 24 hours and whose burn and pause stay owner-only). Governance
+  setups change who may change the rules; they share
+  [governance.md](references/governance.md) and need no vault:
+  [gov-guardians.md](references/gov-guardians.md) (a group that can pause and
+  cancel but not act), [gov-approved-changes.md](references/gov-approved-changes.md)
+  (rule changes need approvals plus a delay),
+  [gov-tiered-delays.md](references/gov-tiered-delays.md) (a longer delay for
+  constitutional changes), [gov-delegated-admin.md](references/gov-delegated-admin.md)
+  (narrow groups for routine admin jobs),
+  [gov-admin-rotation.md](references/gov-admin-rotation.md) (add or replace an
+  admin through a delayed change), [gov-handover.md](references/gov-handover.md)
+  (close the owner shortcut for good). Each
   has a companion `*-verify.md` and its templates under `assets/<name>/`.
 
 Read only the relevant references. The installed manual is normally

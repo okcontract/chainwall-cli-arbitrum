@@ -439,9 +439,8 @@ command seems missing, check these before concluding it does not exist.
     `registry ownership-handover-completed`, `registry role-governance-enabled`,
     and `registry has-role ROLE OWNER` for the values of `registry admin-role`,
     `registry upgrader-role` and `registry default-admin-role`, and report them.
-    Do not call `finalize-owner-bootstrap`: it is out of scope for this setup,
-    and neither the CLI help nor the manual names the grant it needs. If the
-    user asks for it, say so and stop rather than guess a role or capability id.
+    Do not call `finalize-owner-bootstrap` here; it is permanent and is the
+    subject of [gov-handover.md](gov-handover.md).
 
 If any write returns `queued`, finish that timelock action before the next step.
 
@@ -473,8 +472,9 @@ Build it from three parts, each from the reads, never assumed:
    change applies immediately." Never claim delays bound anyone when they are
    not set.
 3. Bootstrap: if `owner-bootstrap-finalized` is false, "Owner bootstrap is not
-   finalized, so the owner key still acts as the timelock governor: any delays
-   bound other operators, not the owner."
+   finalized: the owner key can still reconfigure the delays without holding
+   an explicit grant, though that change itself waits for the `config` delay.
+   gov-handover.md closes this."
 
 Always end with: "Keep the owner key safe: whoever holds it can change the
 vault's rules."

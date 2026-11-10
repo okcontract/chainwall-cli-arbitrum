@@ -135,11 +135,10 @@ incomplete, or targets anything else.
    back 86400 (resend any that does not; after `config` a missed one queues
    for a day). From here, every new interaction waits a
    day. Then read `ownerBootstrapFinalized` and the owner's roles and report
-   them; do not finalize unless the user asks. The factory already enabled role
-   governance and completed the ownership handover; finalizing needs only an
-   explicit `TIMELOCK_GOVERNOR` grant to a group the owner is in, and until
-   then the owner key is the implicit timelock governor, so the delays bound
-   operators, not the owner.
+   them; do not finalize unless the user asks. Until it is finalized the owner key
+   is an implicit timelock governor: it can reconfigure delays without an
+   explicit grant, though that change itself waits for the `config` delay.
+   [gov-handover.md](gov-handover.md) closes this.
 9. Ownership handover, as its own reviewed step: show the exact
    `transferOwnership(adminAccount)` call on the target, the current owner, and
    what the EOA loses. Wait for the user's yes. The user signs it with the

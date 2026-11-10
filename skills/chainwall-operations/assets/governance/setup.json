@@ -1,0 +1,35 @@
+{
+  "setups": ["gov-guardians", "gov-approved-changes", "gov-tiered-delays", "gov-delegated-admin", "gov-admin-rotation", "gov-handover"],
+  "deploySalt": "governance v1",
+  "defaultDelaySeconds": 86400,
+  "defaultLongDelaySeconds": 604800,
+  "categoryConfig": "(DELAY, 2592000, DELAY, 604800, POLICY)",
+  "delayedCategories": [
+    "timelock.category.user",
+    "timelock.category.policy",
+    "timelock.category.contract",
+    "timelock.category.token",
+    "timelock.category.interaction",
+    "timelock.category.activation",
+    "timelock.category.capability",
+    "timelock.category.group",
+    "timelock.category.role.admin",
+    "timelock.category.diamond",
+    "timelock.category.config"
+  ],
+  "configCategoryLast": true,
+  "capabilities": {
+    "pause": "cap.registry.pause",
+    "cancelQueuedChange": "cap.registry.timelock.cancel",
+    "cancelOperation": "cap.interact.operation.cancel",
+    "timelockGovernor": "cap.registry.timelock.write",
+    "grantAdmin": "cap.registry.admin.grant",
+    "revokeAdmin": "cap.registry.admin.revoke",
+    "onboardUsers": "cap.directory.user.write",
+    "catalogContracts": "cap.registry.contract.write",
+    "catalogTokens": "cap.registry.token.write",
+    "writePolicies": "cap.directory.policy.write"
+  },
+  "actionStatus": {"1": "Queued", "2": "Ready", "4": "Executed", "5": "Cancelled", "6": "Expired"},
+  "canary": "0x000000000000000000000000000000000000dEaD"
+}
