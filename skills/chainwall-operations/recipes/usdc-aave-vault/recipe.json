@@ -1,0 +1,52 @@
+{
+  "recipe": "usdc-aave-vault",
+  "chainId": 42161,
+  "defaultRpc": "https://arb1.arbitrum.io/rpc",
+  "okFactory": "0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b",
+  "tokens": {
+    "circle/usdc": {
+      "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "symbol": "USDC",
+      "decimals": 6,
+      "abi": "erc20.json"
+    }
+  },
+  "contracts": {
+    "aave/pool-v3": {
+      "address": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "verify": "getPool() on PoolAddressesProvider 0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb",
+      "abi": "pool.json"
+    }
+  },
+  "group": "usdc-vault-approvers",
+  "policy": {
+    "name": "usdc-vault-policy",
+    "criteria": [
+      "usdc-vault-approvers"
+    ],
+    "thresholds": [
+      1
+    ],
+    "program": "policy.ls"
+  },
+  "interactions": {
+    "usdc-vault-supply": "supply.ls",
+    "usdc-vault-withdraw": "withdraw.ls",
+    "usdc-vault-payout": "payout.ls"
+  },
+  "perOperationCapBaseUnits": "100000000",
+  "timelockDelaySeconds": 86400,
+  "timelockCategories": [
+    "policy",
+    "contract",
+    "token",
+    "interaction",
+    "capability",
+    "group",
+    "role.admin",
+    "diamond",
+    "config"
+  ],
+  "deploySalt": "usdc-aave-vault v1",
+  "minSignerBalanceWei": "5000000000000000"
+}

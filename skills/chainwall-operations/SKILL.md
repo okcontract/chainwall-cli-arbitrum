@@ -35,6 +35,10 @@ not the working directory.
   owner signatures: read [execution.md](references/execution.md).
 - Portfolio reporting, unattended operation, journal sharing, passkeys,
   recovery, or upgrades: read [operations.md](references/operations.md).
+- A complete, tested end-to-end build with fixed inputs: open the matching
+  recipe under [recipes/](recipes/). `usdc-aave-vault` builds a guarded USDC
+  vault on Arbitrum One that can only supply to and withdraw from Aave v3 and
+  pay out to its owner. Read this file first, then the recipe's SKILL.md.
 
 Read only the relevant references. The installed manual is normally
 `share/doc/chainwall/manual.md` beneath the distribution prefix; in a checkout,
@@ -52,6 +56,24 @@ must actually have the corresponding facets. Prefer current method help,
 schemas, and contract behavior over an older prose example. Never invent a
 convenient CLI subcommand, selector, tuple layout, deployment address, or policy
 capability. Use `chainwall artifacts` for protocol artifacts.
+
+## Check the signer first
+
+The CLI signs through Foundry `cast`. Before the first write, run
+`chainwall config show` and `cast wallet list`. Use the profile's configured
+`account`; if the profile has a `password_file`, writes run unattended,
+otherwise Foundry prompts the user for the password. If no account is
+configured and `cast wallet list` is empty, stop and give the user these
+commands to run in their own terminal, then `chainwall config set account NAME`:
+
+```sh
+cast wallet new NAME
+cast wallet import NAME --interactive
+```
+
+Check any Foundry command with `cast <command> --help` before showing it. Never
+ask for, read, print or store a private key, password or password file. The
+signer needs native currency for gas on the selected chain.
 
 ## Preserve the execution model
 
