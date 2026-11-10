@@ -7,8 +7,8 @@ and that setup first; their rules apply. Take every flag from
 ## Outcome
 
 One owner-only interaction, `usdc-vault-exit`, pulls the vault's whole Aave
-position back and sends the vault's entire USDC balance to a fixed cold
-address, in one atomic script with no arguments. Plus the Registry pause as a
+position back (skipped when there is none) and sends the vault's entire USDC
+balance to a fixed cold address, in one atomic script with no arguments. Plus the Registry pause as a
 kill switch: one `roles pause` stops every operation and every rule change;
 `roles unpause` restarts them. Together: if anything looks wrong, exit first,
 then pause.
@@ -48,6 +48,12 @@ hot signer, or any contract without a known way to move USDC out. Read
 `cast code COLD`: if it has code, ask the user to confirm it can hold and move
 USDC.
 
+Read the aToken yourself: field 9 (`aTokenAddress`) of
+`cast call POOL "getReserveData(address)(...)" USDC`. Arbitrum One
+`0x724dc807b04555b71ed48a6896b6F41593b8C637` (aArbUSDCn); Sepolia test mode
+`0x16dA4541aD1807f4443d92D26044C1147406EB80`. Check `UNDERLYING_ASSET_ADDRESS()`
+on it returns USDC. Stop on any mismatch.
+
 ## Mechanics the user should hear first
 
 - Order matters. Pause blocks execution: Interact reads
@@ -56,10 +62,13 @@ USDC.
 - Pause authority: `pause()` for `ADMIN_ROLE` or `cap.registry.pause`;
   `unpause()` for `ADMIN_ROLE` only. A guardian group holding `cap.registry.pause`
   can stop the tenant but cannot restart it.
-- The exit script withdraws `type(uint256).max` from Aave, which Aave treats as
-  "everything". If the vault has no Aave position, Aave reverts and the whole
-  exit reverts (atomic). The transfer amount is the vault's live USDC balance
-  read in the same script.
+- The exit script reads the vault's aToken balance first. If it is zero the
+  Aave withdraw is skipped (`if(..., $noop, ...)` compiles to a real branch;
+  Aave's `withdraw` of `type(uint256).max` with no position reverts `26`
+  INVALID_AMOUNT, which would make the exit unusable for an idle vault).
+  Otherwise it withdraws `type(uint256).max`, which Aave treats as
+  "everything". The transfer amount is the vault's live USDC balance read in
+  the same script after the withdraw, so idle and supplied USDC both leave.
 - `$subjectArgCount == 0`: the exit takes no argument, so nothing about it can
   be chosen at proposal time.
 
@@ -71,24 +80,32 @@ USDC.
 | Interaction | `usdc-vault-exit` |
 | Optional guardian group for pause only | `usdc-vault-guardians` |
 
-Compute every id with `chainwall id NAME`. Catalog: the existing entries.
+Compute every id with `chainwall id NAME`. Catalog: the existing entries plus
+the aToken as `aave/ausdc`: `contracts add aave ausdc "(ATOKEN,$V,$Z)" "$V"`
+then `tokens upsert-token` with `'("aave","ausdc","aUSDC",6,0x0000000000000000000000000000000000000000,0)'`,
+exactly as the vault setup's step 5 does for `circle/usdc` (contract version
+first, zero feed with decimals 0).
 
 ## Scripts
 
 [exit.ls](../assets/vault-emergency-exit/exit.ls): fill `{{policyId}}`, `{{vault}}`, `{{usdc}}`, `{{cold}}`.
+`aave/ausdc` is resolved by name from the catalog, not filled.
 [exit-policy.ls](../assets/vault-emergency-exit/exit-policy.ls): fill `{{policyId}}`, `{{vault}}`, `{{exitId}}`.
-Compile `exit.ls` with [erc20.json](../assets/vault-emergency-exit/erc20.json) (`transfer`, `balanceOf`) and
-[pool.json](../assets/vault-emergency-exit/pool.json) (`withdraw`); expected selectors `0x69328dec`,
-`0x70a08231`, `0xa9059cbb`, valid and complete. Compile the program with
+Compile `exit.ls` with `--abi circle/usdc=erc20.json --abi aave/ausdc=erc20.json --abi aave/pool-v3=pool.json`
+([erc20.json](../assets/vault-emergency-exit/erc20.json): `transfer`, `balanceOf`;
+[pool.json](../assets/vault-emergency-exit/pool.json): `withdraw`); `analyze` lists
+`0x70a08231`, `0x69328dec`, `0xa9059cbb` (both branches), valid and complete. Compile the program with
 `policies program compile`.
 
 ## Order
 
-1. `policies create-policy` `usdc-vault-exit-policy`, groups
+1. Catalog the aToken (`aave/ausdc`, contract version then token record), and
+   `policies create-policy` `usdc-vault-exit-policy`, groups
    `[usdc-vault-approvers]`, thresholds `[1]`.
-2. Compile and analyze; show the user the three calls and the literal COLD.
+2. Compile and analyze; show the user the branch, the three calls and the
+   literal COLD.
 3. `policies program publish usdc-vault-exit-policy exit-policy.json`.
-4. `interactions add exit.ls --id usdc-vault-exit --abi circle/usdc=erc20.json --abi aave/pool-v3=pool.json`.
+4. `interactions add exit.ls --id usdc-vault-exit --abi circle/usdc=erc20.json --abi aave/ausdc=erc20.json --abi aave/pool-v3=pool.json`.
 5. Execution rights already exist: `usdc-vault-approvers` holds
    `cap.registry.interaction.execute` from the vault setup; read
    `registry get-capability-groups CAP` to confirm.
