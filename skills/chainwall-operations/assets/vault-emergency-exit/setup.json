@@ -1,0 +1,36 @@
+{
+  "setup": "vault-emergency-exit",
+  "extends": "usdc-aave-vault",
+  "policy": {
+    "name": "usdc-vault-exit-policy",
+    "criteria": [
+      "usdc-vault-approvers"
+    ],
+    "thresholds": [
+      1
+    ],
+    "program": "exit-policy.ls"
+  },
+  "interactions": {
+    "usdc-vault-exit": "exit.ls"
+  },
+  "aaveWithdrawAll": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+  "killSwitch": {
+    "pause": "roles pause (ADMIN_ROLE or cap.registry.pause)",
+    "unpause": "roles unpause (ADMIN_ROLE only)",
+    "order": "exit first, then pause"
+  },
+  "optionalGuardianGroup": "usdc-vault-guardians with cap.registry.pause",
+  "catalogAdditions": {
+    "aave/ausdc": {
+      "kind": "token",
+      "decimals": 6,
+      "source": "getReserveData(USDC).aTokenAddress",
+      "networks": {
+        "42161": "0x724dc807b04555b71ed48a6896b6F41593b8C637",
+        "11155111": "0x16dA4541aD1807f4443d92D26044C1147406EB80"
+      }
+    }
+  },
+  "withdrawSkippedWhen": "aToken balanceOf(vault) == 0"
+}

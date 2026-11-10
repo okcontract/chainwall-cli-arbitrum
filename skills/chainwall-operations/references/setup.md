@@ -22,7 +22,7 @@ is the lower-level compiler for already-resolved core source. The optional
 ## Connect an existing tenant
 
 Use Arbitrum One (chain ID `42161`), or Ethereum Sepolia (`11155111`) only for a
-recipe's test mode. Obtain its RPC and the Registry or
+a setup's test mode. Obtain its RPC and the Registry or
 SafeFactory instance address from existing project configuration or the user.
 For an isolated new project:
 

@@ -1,0 +1,15 @@
+{
+  "setup": "eth-treasury",
+  "standalone": true,
+  "group": "eth-treasury-approvers",
+  "policy": { "name": "eth-treasury-policy", "criteria": ["eth-treasury-approvers"], "thresholds": [1], "program": "policy.ls" },
+  "accountSalt": "eth-treasury v1",
+  "catalog": { "org": "weth", "contractAndToken": "weth/weth", "tokenRecord": ["weth","weth","WETH",18,"0x0000000000000000000000000000000000000000",0] },
+  "interactions": { "eth-treasury-wrap": "wrap.ls", "eth-treasury-unwrap": "unwrap.ls", "eth-treasury-pay": "pay.ls" },
+  "capWei": "10000000000000000",
+  "networks": {
+    "arbitrum-one": { "chainId": 42161, "weth": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1" },
+    "sepolia": { "chainId": 11155111, "weth": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14" }
+  },
+  "nativeValueRule": "a wrap proposal carries nativeValue equal to its amount; unwrap and pay carry 0"
+}

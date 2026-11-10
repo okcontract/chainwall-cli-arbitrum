@@ -1,6 +1,6 @@
 ---
 name: chainwall-operations
-description: Set up and operate Chainwall vaults, Safes, and onchain automation on Arbitrum through the native CLI. Use for tenant onboarding, holdings reports, Lambdascript interactions, approval policies, execution, and operational recovery.
+description: Set up and operate Chainwall vaults, Safes, and onchain automation on Arbitrum One through the native CLI. Use for tenant onboarding, holdings reports, Lambdascript interactions, approval policies, execution, operational recovery, and complete builds such as a guarded USDC vault on Aave v3, a bot operator with a daily budget, two-approval treasury payouts, an emergency exit, a guarded Safe, a timelocked cap change, putting a protocol's admin role behind Chainwall, an ETH treasury that wraps to WETH and pays fixed recipients, a Uniswap v3 swap desk, or a token issuer with a metered minter.
 ---
 
 # Operate Chainwall
@@ -19,7 +19,7 @@ new administrators, terms acceptance, or recurring jobs.
 
 Start with `chainwall --version`, `chainwall --help`, and `chainwall config show`.
 Confirm Arbitrum One (chain ID `42161`), or Ethereum Sepolia (`11155111`) when a
-recipe's test mode is requested, and the intended Registry in the selected
+setup's test mode is requested, and the intended Registry in the selected
 profile. Use explicit profiles for separate tenants and preserve existing
 configuration; use `CHAINWALL_CONFIG_DIR` for an isolated project when needed.
 All relative reference and asset paths below are relative to this skill folder,
@@ -36,10 +36,30 @@ not the working directory.
   owner signatures: read [execution.md](references/execution.md).
 - Portfolio reporting, unattended operation, journal sharing, passkeys,
   recovery, or upgrades: read [operations.md](references/operations.md).
-- A complete end-to-end build with fixed inputs: open the matching recipe
-  under [recipes/](recipes/) after reading this file.
-  `usdc-aave-vault`: a guarded USDC vault that can only supply to and withdraw
-  from Aave v3 and pay out to its owner.
+- A complete end-to-end build with fixed inputs: open the matching reference
+  after reading this file. [usdc-aave-vault.md](references/usdc-aave-vault.md)
+  builds a guarded USDC vault that can only supply to and withdraw from Aave
+  v3 and pay out to its owner. Extensions of that vault, each reusing its
+  instance and catalog, and each building the vault first when it is missing: [vault-change-cap.md](references/vault-change-cap.md)
+  (a timelocked change of the per-operation cap),
+  [vault-bot-operator.md](references/vault-bot-operator.md) (a bot key with a
+  daily meter and the Registry pause as kill switch),
+  [vault-treasury-approvals.md](references/vault-treasury-approvals.md)
+  (2-of-3 payouts to fixed recipients with a 30 day meter),
+  [vault-emergency-exit.md](references/vault-emergency-exit.md) (one
+  owner-only exit to a cold address, plus pause),
+  [vault-safe-backed.md](references/vault-safe-backed.md) (the same vault as a
+  guarded Safe with two owners). [protocol-admin.md](references/protocol-admin.md)
+  puts a protocol's owner role behind a Chainwall account, with routine
+  parameter changes separated from delayed sensitive changes. Standalone
+  builds that do not involve Aave or USDC, each on its own instance:
+  [eth-treasury.md](references/eth-treasury.md) (an ETH treasury that wraps
+  to and unwraps from WETH and pays WETH to fixed recipients under a cap),
+  [swap-desk.md](references/swap-desk.md) (a desk that can only swap WETH
+  and USDC through Uniswap v3 back to itself, with a minimum-out argument),
+  [token-issuer.md](references/token-issuer.md) (a demo ERC-20 whose minter
+  is metered per 24 hours and whose burn and pause stay owner-only). Each
+  has a companion `*-verify.md` and its templates under `assets/<name>/`.
 
 Read only the relevant references. The installed manual is normally
 `share/doc/chainwall/manual.md` beneath the distribution prefix; in a checkout,
