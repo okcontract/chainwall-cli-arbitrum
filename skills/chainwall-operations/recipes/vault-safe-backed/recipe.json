@@ -1,0 +1,9 @@
+{
+  "recipe": "vault-safe-backed",
+  "extends": "usdc-aave-vault",
+  "safe": { "salt": "usdc-aave-vault safe v1", "owners": ["OWNER", "OWNER2"], "threshold": 2, "guard": true, "module": false },
+  "policy": { "name": "usdc-vault-safe-policy", "criteria": ["usdc-vault-approvers"], "thresholds": [1], "program": "../usdc-aave-vault/policy.ls" },
+  "interactions": { "usdc-vault-safe-supply": "../usdc-aave-vault/supply.ls", "usdc-vault-safe-withdraw": "../usdc-aave-vault/withdraw.ls", "usdc-vault-safe-payout": "../usdc-aave-vault/payout.ls" },
+  "executionRoute": "operations sign-actor --via safe; operations sign --via safe per owner; operations execute --via safe --actor-signature-file --signatures-file",
+  "guardRule": "CALL to Interact execution selectors or DELEGATECALL to the singleton migrator only; zero refund params; no Safe self-calls"
+}

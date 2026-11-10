@@ -1,0 +1,12 @@
+{
+  "recipe": "vault-change-cap",
+  "extends": "usdc-aave-vault",
+  "policy": "usdc-vault-policy",
+  "defaultNewCapBaseUnits": "500000000",
+  "category": "timelock.category.policy",
+  "categoryIdRule": "chainwall id timelock.category.policy; never the bare suffix",
+  "gracePeriodSeconds": 604800,
+  "executeAuthority": "anyone, once status is Ready and block time >= eta",
+  "cancelAuthority": ["the actor who queued it", "ADMIN_ROLE", "cap.registry.timelock.cancel"],
+  "proposalsBeforeChange": "stale after the change; re-propose"
+}

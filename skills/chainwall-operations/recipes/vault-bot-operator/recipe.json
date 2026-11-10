@@ -1,0 +1,11 @@
+{
+  "recipe": "vault-bot-operator",
+  "extends": "usdc-aave-vault",
+  "group": "usdc-vault-bots",
+  "policy": { "name": "usdc-vault-bot-policy", "criteria": ["usdc-vault-bots"], "thresholds": [1], "program": "bot-policy.ls" },
+  "interactions": { "usdc-vault-bot-supply": "supply.ls", "usdc-vault-bot-withdraw": "withdraw.ls" },
+  "meter": { "id": "usdc-vault-bot-daily", "windowSeconds": 86400, "dailyLimitBaseUnits": "500000000", "perOperationCapBaseUnits": "100000000", "selector": "0x4671fe19", "function": "consumePolicyMeter(bytes32,bytes32,uint64,uint256,uint256,bytes32,bytes32,bytes32,bytes32)" },
+  "killSwitch": { "pause": "roles pause (ADMIN_ROLE or cap.registry.pause)", "unpause": "roles unpause (ADMIN_ROLE only)" },
+  "executeCapabilityGrantee": "group:usdc-vault-bots",
+  "botMinBalanceWei": "500000000000000"
+}

@@ -1,0 +1,10 @@
+{
+  "recipe": "vault-treasury-approvals",
+  "extends": "usdc-aave-vault",
+  "group": "usdc-vault-treasury",
+  "policy": { "name": "usdc-vault-treasury-policy", "criteria": ["usdc-vault-treasury"], "thresholds": [2], "program": "treasury-policy.ls" },
+  "interactionsPattern": "usdc-vault-pay-<label> from pay.ls, one per recipient",
+  "meter": { "id": "usdc-vault-treasury-monthly", "windowSeconds": 2592000, "limitBaseUnits": "5000000000", "perPayoutCapBaseUnits": "1000000000", "selector": "0x4671fe19" },
+  "executeCapabilityGrantee": "group:usdc-vault-treasury",
+  "approverMinBalanceWei": "200000000000000"
+}

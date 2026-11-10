@@ -40,6 +40,13 @@ not the working directory.
   under [recipes/](recipes/) after reading this file.
   `usdc-aave-vault`: a guarded USDC vault that can only supply to and withdraw
   from Aave v3 and pay out to its owner.
+  Extensions of that vault, each reusing its instance and catalog:
+  `vault-change-cap` (a timelocked change of the per-operation cap),
+  `vault-bot-operator` (a bot key with a daily meter and the Registry pause as
+  kill switch), `vault-treasury-approvals` (2-of-3 payouts to fixed recipients
+  with a 30 day meter), `vault-emergency-exit` (one owner-only exit to a cold
+  address, plus pause), `vault-safe-backed` (the same vault as a guarded Safe
+  with two owners).
 
 Read only the relevant references. The installed manual is normally
 `share/doc/chainwall/manual.md` beneath the distribution prefix; in a checkout,
