@@ -15,6 +15,16 @@ Both owners sign each operation, and the Registry policy is checked on top.
 The Safe's owners can never change their own set, threshold, modules or guard
 from inside the Safe (self-calls are blocked by the guard).
 
+
+## Network
+
+The network is the one the vault was built on. On Sepolia test mode, take
+USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
+every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
+as the vault setup's Network section says. Test USDC comes from the Aave
+faucet there, not from the user.
+
 ## Prerequisites
 
 Vault setup steps 1 to 8 done (the catalog and the approvers group are

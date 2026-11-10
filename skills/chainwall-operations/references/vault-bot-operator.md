@@ -14,6 +14,16 @@ rule. The owner can stop everything with one Registry pause and restart it with
 one unpause. If the bot key leaks, the attacker gets at most one day of
 budget, into Aave or back to the vault, and nowhere else.
 
+
+## Network
+
+The network is the one the vault was built on. On Sepolia test mode, take
+USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
+every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
+as the vault setup's Network section says. Test USDC comes from the Aave
+faucet there, not from the user.
+
 ## Prerequisites
 
 Vault setup steps 1 to 8 done (run its Resume table). Delays: if

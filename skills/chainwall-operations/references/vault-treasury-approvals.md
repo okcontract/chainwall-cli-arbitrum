@@ -13,6 +13,16 @@ to any other address is impossible: there is no interaction for it, and the
 Lambdascript recipient is a literal, not an argument. The owner alone can no
 longer pay anyone.
 
+
+## Network
+
+The network is the one the vault was built on. On Sepolia test mode, take
+USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
+every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
+as the vault setup's Network section says. Test USDC comes from the Aave
+faucet there, not from the user.
+
 ## Prerequisites
 
 Vault setup steps 1 to 8 done. If the policy, group, interaction or

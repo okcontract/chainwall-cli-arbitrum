@@ -13,6 +13,16 @@ after the delay; the setup proves the old cap holds until then, then executes
 or cancels the queued action. This is the smallest real example of a
 timelocked rule change.
 
+
+## Network
+
+The network is the one the vault was built on. On Sepolia test mode, take
+USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
+every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
+as the vault setup's Network section says. Test USDC comes from the Aave
+faucet there, not from the user.
+
 ## Prerequisites (read, do not write)
 
 Run the Resume table of the vault setup. Required: instance bound in the

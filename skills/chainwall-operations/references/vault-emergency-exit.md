@@ -13,6 +13,16 @@ kill switch: one `roles pause` stops every operation and every rule change;
 `roles unpause` restarts them. Together: if anything looks wrong, exit first,
 then pause.
 
+
+## Network
+
+The network is the one the vault was built on. On Sepolia test mode, take
+USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
+every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
+as the vault setup's Network section says. Test USDC comes from the Aave
+faucet there, not from the user.
+
 ## Prerequisites
 
 Vault setup steps 1 to 8 done. If the policy or interaction delays are live,
