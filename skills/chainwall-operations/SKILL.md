@@ -18,7 +18,8 @@ blocks the next step. Setup work does not authorize unrelated asset movements,
 new administrators, terms acceptance, or recurring jobs.
 
 Start with `chainwall --version`, `chainwall --help`, and `chainwall config show`.
-Confirm Arbitrum One (chain ID `42161`) and the intended Registry in the selected
+Confirm Arbitrum One (chain ID `42161`), or Ethereum Sepolia (`11155111`) when a
+recipe's test mode is requested, and the intended Registry in the selected
 profile. Use explicit profiles for separate tenants and preserve existing
 configuration; use `CHAINWALL_CONFIG_DIR` for an isolated project when needed.
 All relative reference and asset paths below are relative to this skill folder,
@@ -67,14 +68,22 @@ write, run `cast wallet list`:
 - none: stop and tell the user to run `cast wallet new NAME` (or
   `cast wallet import NAME --interactive`) in their own terminal.
 
-Read the owner address with `cast wallet address --account NAME`; if that
-cannot unlock the keystore (no TTY, `Device not configured`), ask the user for
-the address instead. Agent shells usually have no TTY, so Foundry cannot prompt
-for a password there. On macOS the
-user can enroll the keystore once with `cast wallet touch-id enroll NAME`; each
-signature then asks for Touch ID. Otherwise the user runs the signed commands
-in their own terminal when you hand them over. Never accept a password in chat,
-and never read, create or print a password file. Check any Foundry command with
+Agent shells usually have no TTY, so Foundry cannot prompt for a password
+there. Default: ask the user once for the keystore password, write it only to a
+private temporary file (`mktemp`, mode 600, outside the project) with your
+file-writing tool, pass that path as `--password-file` on every signing
+command, and delete the file when the work ends. Never put the password in a
+shell command, environment variable, script, log, report or memory, and never
+repeat it back. Tell the user it will be visible in the chat and that a test
+or dev wallet is the safer choice. If the profile already has a working
+`password_file`, use it without asking and leave it in place; never open,
+print, move or delete a password file you did not create. If the user declines
+to share the password: on macOS they can enroll the keystore once with
+`cast wallet touch-id enroll NAME` (each signature then asks for Touch ID), or
+they run the signed commands in their own terminal when you hand them over.
+Read the owner address with `cast wallet address --account NAME` (add
+`--password-file` when you have one); if it cannot unlock the keystore, ask
+the user for the address instead. Check any Foundry command with
 `cast <command> --help` before showing it. The signer needs native currency for
 gas.
 

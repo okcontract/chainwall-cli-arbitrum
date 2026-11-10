@@ -76,5 +76,45 @@
     "priceFeedDecimals": 0,
     "requires": "contract version circle/usdc first"
   },
-  "proposalDeadlineSeconds": 86400
+  "proposalDeadlineSeconds": 86400,
+  "networks": {
+    "arbitrum-one": {
+      "default": true,
+      "chainId": 42161,
+      "chainName": "arbitrum",
+      "defaultRpc": "https://arb1.arbitrum.io/rpc",
+      "okFactory": "0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b",
+      "factoryBundled": true,
+      "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "aavePool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "aavePoolAddressesProvider": "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb",
+      "minSignerBalanceWei": {
+        "deploying": "1500000000000000",
+        "instanceExists": "200000000000000"
+      },
+      "funding": "user sends 5 USDC on Arbitrum One to the vault"
+    },
+    "sepolia": {
+      "default": false,
+      "testnet": true,
+      "chainId": 11155111,
+      "chainName": "sepolia",
+      "defaultRpc": "https://sepolia.gateway.tenderly.co",
+      "okFactory": "0xA27260B6c0F31Ed0f06daE7789eF00A6A1a9C8b7",
+      "factoryBundled": false,
+      "usdc": "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8",
+      "usdcNote": "Aave's Sepolia test USDC (the reserve Aave accepts); not Circle's Sepolia USDC",
+      "aavePool": "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951",
+      "aavePoolAddressesProvider": "0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A",
+      "aaveFaucet": "0xC959483DBa39aa9E78757139af0e9a2EDEb3f42D",
+      "minSignerBalanceWei": {
+        "deploying": "20000000000000000",
+        "instanceExists": "2000000000000000"
+      },
+      "profile": "usdc-vault-sepolia",
+      "funding": "agent mints 5 test USDC to the vault with the Aave faucet: mint(address token, address to, uint256 amount)",
+      "rpcNote": "Needs an RPC that allows ~90M-gas eth_estimateGas/eth_call. Tested 2026-11-10: sepolia.gateway.tenderly.co works; ethereum-sepolia-rpc.publicnode.com rejects the deploy estimate (chainwall shows 'The RPC rejected a read' or a bare TransactionFailed)."
+    }
+  },
+  "note": "Top-level chainId/okFactory/tokens/contracts/minSignerBalanceWei are the arbitrum-one defaults; when a network is chosen, use only networks.<name> values."
 }
