@@ -40,7 +40,7 @@ not the working directory.
   after reading this file. [usdc-aave-vault.md](references/usdc-aave-vault.md)
   builds a guarded USDC vault that can only supply to and withdraw from Aave
   v3 and pay out to its owner. Extensions of that vault, each reusing its
-  instance and catalog: [vault-change-cap.md](references/vault-change-cap.md)
+  instance and catalog, and each building the vault first when it is missing: [vault-change-cap.md](references/vault-change-cap.md)
   (a timelocked change of the per-operation cap),
   [vault-bot-operator.md](references/vault-bot-operator.md) (a bot key with a
   daily meter and the Registry pause as kill switch),

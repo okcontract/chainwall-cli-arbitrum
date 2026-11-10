@@ -25,10 +25,21 @@ faucet there, not from the user.
 
 ## Prerequisites
 
-Vault setup steps 1 to 8 done. If the policy, group, interaction or
-capability delays are live, every write below returns `queued`; collect
-`actionId` and `eta`, execute after `eta` with `timelock execute-action`, then
-continue. Say so before starting.
+This setup layers on the vault from [usdc-aave-vault.md](usdc-aave-vault.md),
+and it builds that vault itself when it is missing. Run the vault setup's
+Resume table against the active profile:
+
+- No instance bound, or any of the vault's steps 1 to 8 not done: run
+  [usdc-aave-vault.md](usdc-aave-vault.md) now, steps 1 to 8 and its checks 1
+  to 3, and skip its step 9 (delays) for the moment. Then come back here.
+- Steps 1 to 8 done and delays still at zero: continue here directly. This is
+  the fast path.
+- Delays already live (86400): every Registry write below returns `queued` and
+  applies after 24 hours. Say so first, collect each `actionId` and `eta`,
+  execute them with `timelock execute-action` after `eta`, and continue only
+  when the read-back shows the change.
+
+Tell the user which of the three cases applies before the first write.
 
 ## Inputs
 
@@ -107,3 +118,8 @@ recipients, caps, meter id, every transaction hash, and the approval sequence
 of the test payout. State: payouts go only to the two listed addresses, need
 two of three approvals, and are limited to 1000 USDC each and 5000 USDC per
 30 day window.
+
+Then finish the vault's protection if it is still open: if the vault setup's
+step 9 delays are not set (`timelock get-category-config` on the full category
+names reads `[[0,…]]`), run that step 9 now, exactly as the vault setup
+describes, so the tenant does not stay without delays. Record the result.

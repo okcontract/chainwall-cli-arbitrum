@@ -23,15 +23,21 @@ every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
 as the vault setup's Network section says. Test USDC comes from the Aave
 faucet there, not from the user.
 
-## Prerequisites (read, do not write)
+## Prerequisites
 
-Run the Resume table of the vault setup. Required: instance bound in the
-active profile, policy `usdc-vault-policy` with a published program, the three
-interactions present. Read
-`timelock get-category-config $(chainwall id timelock.category.policy)` and
-record whether the delay is `0` (change applies at once) or `86400` (queued).
+This setup changes the vault from [usdc-aave-vault.md](usdc-aave-vault.md) and
+builds what is missing first. Run that setup's Resume table against the active
+profile:
 
-Ask the user for one value: the new cap in USDC. Default 500 USDC
+- No instance bound, or any of its steps 1 to 10 not done: run
+  [usdc-aave-vault.md](usdc-aave-vault.md) to the end now, including step 9
+  (delays), then come back here. A cap change is only a timelocked change when
+  the policy delay is live.
+- Everything done: continue here.
+
+Read `timelock get-category-config $(chainwall id timelock.category.policy)`
+and record whether the delay is `0` (change applies at once) or `86400`
+(queued). Ask the user for one value: the new cap in USDC. Default 500 USDC
 (`500000000`). Nothing else.
 
 ## Mechanics the user should hear first

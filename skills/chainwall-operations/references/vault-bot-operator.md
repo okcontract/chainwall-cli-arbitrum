@@ -26,12 +26,21 @@ faucet there, not from the user.
 
 ## Prerequisites
 
-Vault setup steps 1 to 8 done (run its Resume table). Delays: if
-`timelock.category.policy`, `group`, `interaction` or `capability` are live
-(86400), every write below returns `queued` and applies after 24 hours; collect
-each `actionId` and `eta`, execute them with `timelock execute-action` after
-`eta`, and only then continue. Tell the user this before starting. Running this
-setup before the vault's step 9 avoids the wait.
+This setup layers on the vault from [usdc-aave-vault.md](usdc-aave-vault.md),
+and it builds that vault itself when it is missing. Run the vault setup's
+Resume table against the active profile:
+
+- No instance bound, or any of the vault's steps 1 to 8 not done: run
+  [usdc-aave-vault.md](usdc-aave-vault.md) now, steps 1 to 8 and its checks 1
+  to 3, and skip its step 9 (delays) for the moment. Then come back here.
+- Steps 1 to 8 done and delays still at zero: continue here directly. This is
+  the fast path.
+- Delays already live (86400): every Registry write below returns `queued` and
+  applies after 24 hours. Say so first, collect each `actionId` and `eta`,
+  execute them with `timelock execute-action` after `eta`, and continue only
+  when the read-back shows the change.
+
+Tell the user which of the three cases applies before the first write.
 
 ## Inputs
 
@@ -131,3 +140,8 @@ pause and unpause hashes. State plainly: the bot can supply and withdraw up to
 500 USDC per UTC day in operations of at most 100 USDC; it cannot pay out; the
 owner can pause everything; while paused, nobody, including the owner, can
 write to the Registry until unpause.
+
+Then finish the vault's protection if it is still open: if the vault setup's
+step 9 delays are not set (`timelock get-category-config` on the full category
+names reads `[[0,…]]`), run that step 9 now, exactly as the vault setup
+describes, so the tenant does not stay without delays. Record the result.
