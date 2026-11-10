@@ -49,8 +49,10 @@ and `--gas-price`, then bind the instance with `chainwall login ADDRESS`.
 
 ## Profile
 
-Create and select a Chainwall profile named `usdc-vault` with `chain 42161`,
-the RPC, and `account NAME`. Leave other profiles unchanged.
+Use the active Chainwall profile (`chainwall config show`). Set `chain 42161`
+and the RPC on it if they are missing. Do not create or switch profiles. If the
+profile already binds an instance on 42161, step 1 reuses it; otherwise step 1
+deploys and `deploy` binds the new instance to this profile.
 
 ## Names
 
