@@ -41,6 +41,7 @@
     "timelock.category.contract",
     "timelock.category.token",
     "timelock.category.interaction",
+    "timelock.category.activation",
     "timelock.category.capability",
     "timelock.category.group",
     "timelock.category.role.admin",

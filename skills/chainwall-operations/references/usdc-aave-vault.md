@@ -206,7 +206,7 @@ The signer needs ETH on the network for about 20 transactions (Sepolia limits: `
 balance with `cast balance OWNER --rpc-url RPC`. Stop below 0.0015 ETH when the
 instance still has to be deployed; when it already exists, the remaining
 writes are at most about 2M gas in total (step 9 alone is about 117k gas per
-category, about 1.05M for all nine), so stop only below 0.0002 ETH. These
+category, about 1.2M for all ten), so stop only below 0.0002 ETH. These
 limits assume Arbitrum's usual gas price (well under 0.1 gwei). Check
 `cast gas-price --rpc-url RPC`; if it is higher, the limit is the remaining
 gas times that price, with a 2x margin. The fee is small, but a send reserves `gasLimit x maxFeePerGas` up
@@ -400,7 +400,9 @@ command seems missing, check these before concluding it does not exist.
    later change to policy, catalog, interactions, capabilities, groups, roles
    or the diamond (including a rerun that "fixes" an earlier step) returns
    `queued` and applies only after 86400 seconds; track it with
-   `timelock get-pending-action-count`.
+   `timelock get-pending-action-count`. `activation` is delayed too, so a
+   deactivated interaction cannot be switched back on at once; `roles pause`
+   is not timelocked and stays the instant stop.
 
    Never type or paste a category id. Compute it inside the same command from
    the full name, exactly in this form, for these names in this order
@@ -409,7 +411,7 @@ command seems missing, check these before concluding it does not exist.
 
    ```sh
    CFG='(86400,86400,86400,604800,0x0000000000000000000000000000000000000000000000000000000000000000)'
-   for NAME in policy contract token interaction capability group role.admin diamond config; do
+   for NAME in policy contract token interaction activation capability group role.admin diamond config; do
      ID=$(chainwall id "timelock.category.$NAME")
      chainwall timelock set-category-config "$ID" "$CFG" --dry-run
    done
