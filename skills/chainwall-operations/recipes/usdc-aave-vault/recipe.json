@@ -48,5 +48,5 @@
     "config"
   ],
   "deploySalt": "usdc-aave-vault v1",
-  "minSignerBalanceWei": "5000000000000000"
+  "minSignerBalanceWei": "1500000000000000"
 }

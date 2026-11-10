@@ -48,7 +48,8 @@ cast wallet import NAME --interactive
 Check any Foundry command with `cast <command> --help` before showing it.
 The signer needs ETH on Arbitrum One for about 20 transactions. Read its
 balance with `cast balance OWNER --rpc-url RPC` and stop if it is below
-0.005 ETH.
+0.0015 ETH (three factory stages are about 16M gas each; measure with
+`cast estimate` at the current gas price if in doubt).
 
 ## Profile
 
