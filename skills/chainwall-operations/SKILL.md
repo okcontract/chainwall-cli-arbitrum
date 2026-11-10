@@ -141,6 +141,10 @@ These hold on the current CLI; none of them is a failed setup.
   transaction. Check `accounts inspect` at the dry run's predicted address
   before any retry.
 - A read straight after a confirmed write can be stale once; read again.
+- Fees: the CLI can choose a tip far above `--estimate` (seen on Sepolia: a
+  0.5 gwei tip made deploy stage 1 cost 0.038 ETH). Cap it on any write with
+  `--max-fee AMOUNT --priority-fee AMOUNT` (wei or gwei), for example twice
+  `cast gas-price` and a 1000 wei tip on Sepolia.
 - Terms: `terms document --out terms.md` (add
   `--ipfs-gateway https://gateway.pinata.cloud/ipfs` if the default gateway
   fails), then `terms accept-terms --document-file terms.md`. The hash form

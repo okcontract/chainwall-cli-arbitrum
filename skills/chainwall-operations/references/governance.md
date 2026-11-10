@@ -12,7 +12,7 @@ the record file each setup names, on every network.
 
 Instance step, in full: if the profile has no instance,
 `chainwall deploy --owner OWNER --indexing --no-auth-accounts --salt "governance v1"`
-(dry-run, estimate and resume as the vault's step 1), then
+(dry-run, estimate and resume as the vault's step 1, keeping this salt), then
 `terms document --out terms.md --ipfs-gateway https://gateway.pinata.cloud/ipfs`,
 show it, and `terms accept-terms --document-file terms.md` on the user's yes.
 
@@ -89,8 +89,8 @@ timelocked.
 
 `timelock get-action-summary ID` prints one array: `[id, category, scope,
 actor, queuedAt, delay, eta, expiresAt, status, policyId, payloadHash]`.
-Status: 1 Queued, 2 Ready (approvals complete), 4 Executed, 5 Cancelled,
-6 Expired. `timelock get-pending-action-count` counts open actions.
+Status: 1 Queued, 2 Ready (approvals complete; without a policy an action
+stays 1 until it executes), 4 Executed, 5 Cancelled, 6 Expired. `timelock get-pending-action-count` counts open actions.
 Executing early: `cast call REGISTRY "executeAction(bytes32)" ID --from OWNER --rpc-url RPC`
 reverts `TimelockActionNotReady(id, status)`.
 
@@ -108,7 +108,7 @@ Delay proof, run once after the delays are live unless the setup's own drill
 already queued something: ACTOR (OWNER unless the verify file names another)
 sends `users add CANARY` → `queued`; early `executeAction` reverts
 `TimelockActionNotReady`. Then, when DELAY is 600 or less or the user chooses
-to wait: after `eta` anyone runs `timelock execute-action ID` → status 4,
+to wait: after `eta` OWNER (anyone may) runs `timelock execute-action ID` → status 4,
 `users contains CANARY` true, and `users remove CANARY` goes through the same
 path. Otherwise `timelock cancel-action ID` → status 5.
 

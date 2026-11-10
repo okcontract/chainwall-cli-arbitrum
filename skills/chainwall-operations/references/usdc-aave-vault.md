@@ -91,9 +91,9 @@ Sepolia differences, all of them:
 - Factory: the CLI bundles no Sepolia factory (`deploy` fails with
   `FactoryRequired` otherwise); the profile's `factory` key supplies it.
 - Gas: Sepolia ETH is free from public faucets. Use only
-  `networks.sepolia.minSignerBalanceWei` (0.02 ETH to deploy, 0.002 ETH when
+  `networks.sepolia.minSignerBalanceWei` (0.1 ETH to deploy, 0.002 ETH when
   the instance exists); the ETH figures in Signer are Arbitrum One. If the
-  owner has less, tell the user to get about 0.05
+  owner has less, tell the user to get about 0.15
   Sepolia ETH from a Sepolia faucet for the owner address and wait. A fresh
   Sepolia deploy uses far more gas than Arbitrum (about 180M across the three
   stages) but costs almost nothing at Sepolia prices.

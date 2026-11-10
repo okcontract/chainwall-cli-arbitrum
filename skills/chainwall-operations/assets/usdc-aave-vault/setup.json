@@ -109,7 +109,7 @@
       "aavePoolAddressesProvider": "0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A",
       "aaveFaucet": "0xC959483DBa39aa9E78757139af0e9a2EDEb3f42D",
       "minSignerBalanceWei": {
-        "deploying": "20000000000000000",
+        "deploying": "100000000000000000",
         "instanceExists": "2000000000000000"
       },
       "profile": "usdc-vault-sepolia",

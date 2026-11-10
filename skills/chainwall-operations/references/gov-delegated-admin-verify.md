@@ -14,7 +14,8 @@ D a delegate of the job. "Works" means no revert.
    and `"grantCapabilityGroup(bytes32,bytes32)" CAP GROUP` with the delegate's
    own capability and group.
 5. A delegate of one job is refused another job: an onboarder calling the
-   `createPolicy` line reverts; a policy author calling `addUser` reverts.
+   `createPolicy` line reverts; a policy author or catalog manager calling
+   `addUser` reverts. Run the pairs that exist.
 6. Delay proof (governance.md), ACTOR = an onboarder if one exists, else
    OWNER: the delay binds delegates too.
 
