@@ -6,13 +6,15 @@ All checks use the live instance. Do not start a local fork or node.
    for `usdc-vault-supply` with args `["101000000"]`, actor = owner, vault = the
    OKAccount. `chainwall policies program simulate usdc-vault-policy context.json`
    must reject it. The same context with `["1000000"]` must pass.
-2. Unauthorized actor. `operations simulate` evaluates a proposed operation,
-   so first `operations propose` a `usdc-vault-supply` with amount `1000000` on
-   chain (this is a small write). Then simulate it with `--from` an address
-   that is not the owner (for example `0x000000000000000000000000000000000000dEaD`),
-   with operationId, creator and createdAt from the proposal receipt. It must be
-   rejected for lack of approval or execute capability. Report the decoded
-   revert. The same proposal is reused for the real run in step 4.
+2. Unauthorized actor. `operations propose` a `usdc-vault-supply` with amount
+   `1000000` (a small write; the owner's approval is recorded with it). Then
+   check from a non-member address with a read-only call, since the CLI's
+   `--from` must match the signer: run the policy program with a
+   `policy-context` whose `actor` is `0x000000000000000000000000000000000000dEaD`
+   (`policies program simulate usdc-vault-policy context.json`), and
+   `cast call INTERACT "execute(uint256,bytes32,uint256[],uint256)" OPID SUPPLY_ID "[1000000]" 100000 --from 0x000000000000000000000000000000000000dEaD`.
+   Both must revert; report the decoded reasons. The proposal is reused in
+   step 4.
 3. Catalog boundary. Write a one-line script that calls `transfer` on a
    `@token(circle/usdt)` that is not registered. `chainwall compile` without a
    snapshot must fail to resolve it; `interactions add --dry-run` must not
