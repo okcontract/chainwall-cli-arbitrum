@@ -131,7 +131,9 @@ incomplete, or targets anything else.
 8. Set each timelock category in setup.json to `(86400, 86400, 86400,
    604800, 0x0)` and read each back. The id is `chainwall id` of the full name
    (`chainwall id timelock.category.interaction`), never the bare suffix.
-   `timelock.category.config` last. From here, every new interaction waits a
+   `timelock.category.config` last, and only after every other category reads
+   back 86400 (resend any that does not; after `config` a missed one queues
+   for a day). From here, every new interaction waits a
    day. Then read `ownerBootstrapFinalized` and the owner's roles and report
    them; do not finalize unless the user asks. The factory already enabled role
    governance and completed the ownership handover; finalizing needs only an

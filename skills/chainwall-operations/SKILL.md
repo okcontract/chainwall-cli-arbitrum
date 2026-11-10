@@ -134,6 +134,15 @@ These hold on the current CLI; none of them is a failed setup.
   fails), then `terms accept-terms --document-file terms.md`. The hash form
   downloads the document again and fails on the same gateway.
 - `operations status` prints `approved: true|false`, not a count.
+- `--out FILE` never overwrites. Name proposals `<name>-proposal.json` so
+  they do not collide with a compiled `<name>.json`, and use a new name when
+  resending after a failed attempt.
+- If `deploy` exits before printing the Registry, run the same `deploy`
+  again: it fails with `DeploymentAlreadyStarted` and prints the address.
+- `operations withdraw ID` every test proposal you do not execute, so no
+  approved operation stays open. If `operations propose` exits with an RPC
+  error after broadcasting, its saved file is unusable: withdraw that
+  operation and propose again under a new file name.
 
 ## Preserve the execution model
 

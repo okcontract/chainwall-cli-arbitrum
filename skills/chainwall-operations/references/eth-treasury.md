@@ -59,7 +59,7 @@ Compute every id with `chainwall id NAME`.
 [pay.ls](../assets/eth-treasury/pay.ls), [policy.ls](../assets/eth-treasury/policy.ls).
 Fill `{{policyId}}`, `{{vault}}`, `{{recipient}}`, `{{wrapId}}`, `{{unwrapId}}`,
 `{{payId}}`, `{{capWei}}`. Compile with
-`--abi weth/weth=../assets/eth-treasury/weth.json`. Expected selectors: wrap
+`--abi weth/weth=weth.json` (copy the asset files into the working folder). Expected selectors: wrap
 `0xd0e30db0`, unwrap `0x2e1a7d4d`, pay `0xa9059cbb`. The program compiles with
 `policies program compile`.
 
@@ -80,9 +80,10 @@ Fill `{{policyId}}`, `{{vault}}`, `{{recipient}}`, `{{wrapId}}`, `{{unwrapId}}`,
 7. `capabilities grant-capability-group` of `cap.registry.interaction.execute`
    to the group.
 8. Fund: the user sends ETH to the account (on Sepolia, the owner sends
-   0.02 test ETH with `cast send VAULT --value 20000000000000000`).
-9. Delays: the vault setup's step 9, unless other setups still have to layer on
-   this instance.
+   0.02 test ETH with `cast send VAULT --value 20000000000000000 --account NAME --rpc-url RPC`).
+9. Delays, only after the verify file has passed (a mistake found later
+   takes 24 hours to fix): the vault setup's step 9 (skip only if the user says more setups
+   will be added to this instance).
 
 ## Pauses
 

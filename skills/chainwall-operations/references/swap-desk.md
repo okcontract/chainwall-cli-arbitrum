@@ -3,7 +3,9 @@
 Read `../SKILL.md` first. Shared mechanics (signer, profile, instance deploy or
 reuse, terms, Sepolia test mode, resume) are the ones in
 [usdc-aave-vault.md](usdc-aave-vault.md), followed by section name; this setup
-does not need that vault. Take every flag from `chainwall <command> --help --json`.
+does not need that vault. Use the active profile or the one the user names (on Sepolia any profile with
+chain 11155111 and the Sepolia factory), and write `swap-desk-record.md`. Take
+flags from `chainwall <command> --help`.
 
 ## Outcome
 
@@ -80,8 +82,9 @@ Expected selectors: `0x095ea7b3` then `0x04e45aaf` for both.
 7. Grant `cap.registry.interaction.execute` to the group.
 8. Fund the account with the input token (Sepolia: wrap 0.005 test ETH to WETH
    with the owner and send it, or use eth-treasury's wrap).
-9. Delays: the vault setup's step 9, unless other setups still have to layer on
-   this instance.
+9. Delays, only after the verify file has passed (a mistake found later
+   takes 24 hours to fix): the vault setup's step 9 (skip only if the user says more setups
+   will be added to this instance).
 
 ## Pauses
 

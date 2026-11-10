@@ -417,7 +417,9 @@ command seems missing, check these before concluding it does not exist.
    Never type or paste a category id. Compute it inside the same command from
    the full name, exactly in this form, for these names in this order
    (`config` last: it governs the others, and any delay set earlier queues the
-   remaining setup):
+   remaining setup; before sending `config`, re-read the nine others and
+   resend any that does not read 86400, because after `config` a missed one
+   queues for a day):
 
    ```sh
    CFG='(86400,86400,86400,604800,0x0000000000000000000000000000000000000000000000000000000000000000)'

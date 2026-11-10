@@ -3,7 +3,9 @@
 Read `../SKILL.md` first. Shared mechanics (signer, profile, instance deploy or
 reuse, terms, Sepolia test mode, resume) are the ones in
 [usdc-aave-vault.md](usdc-aave-vault.md), followed by section name; this setup
-does not need that vault. Take every flag from `chainwall <command> --help --json`.
+does not need that vault. Use the active profile or the one the user names (on Sepolia any profile with
+chain 11155111 and the Sepolia factory), and write `token-issuer-record.md`. Take
+flags from `chainwall <command> --help`.
 
 ## Outcome
 
@@ -24,8 +26,9 @@ who holds it.
 
 ## Mechanics the user should hear first
 
-- The meter is `consumePolicyMeter` in USDC-free units: the token's own base
-  units (18 decimals). Fixed UTC windows, as in vault-bot-operator.
+- The meter is `consumePolicyMeter`, counted in the token's own base units
+  (18 decimals). Defaults when the user names no limits: `mintCapBaseUnits`
+  and `dailyMintLimitBaseUnits` in setup.json. Fixed UTC windows, as in vault-bot-operator.
 - `mint(to, amount)` takes two arguments; the policy requires `to != 0` and caps
   `amount`. The recipient is not fixed: that is the point of a minter role.
 - Pause is the token's own `setPaused(bool)`, an admin action here, distinct
@@ -71,8 +74,9 @@ interactions with `--abi myproject/token=token.json`; expected selectors mint
 8. Grant `cap.registry.interaction.execute` to both groups.
 9. Ownership handover, reviewed: `transferOwnership(issuerAccount)` signed by
    the token's current owner key; read `owner()` back.
-10. Delays: the vault setup's step 9, unless other setups still have to layer
-    on this instance.
+10. Delays, only after the verify file has passed (a mistake found later
+   takes 24 hours to fix): the vault setup's step 9 (skip only if the user says more setups
+   will be added to this instance).
 
 ## Pauses
 
