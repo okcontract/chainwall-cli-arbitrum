@@ -39,8 +39,9 @@ in chat, no password file; Touch ID enrollment or the user's own terminal for
 signatures.
 
 The signer needs ETH on Arbitrum One for about 20 transactions. Read its
-balance with `cast balance OWNER --rpc-url RPC` and stop if it is below
-0.0015 ETH. The fee is small, but a send reserves `gasLimit x maxFeePerGas` up
+balance with `cast balance OWNER --rpc-url RPC`. Stop below 0.0015 ETH when the
+instance still has to be deployed; when it already exists, the remaining
+writes are about 2M gas in total, so stop only below 0.0002 ETH. The fee is small, but a send reserves `gasLimit x maxFeePerGas` up
 front and the factory stages are large (stage 1 estimates around 16.5M gas), so
 a stage can be refused on balance while the fee itself is affordable. If that
 happens, send that stage with `cast send` and an explicit tight `--gas-limit`

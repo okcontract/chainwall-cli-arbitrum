@@ -48,7 +48,10 @@
     "timelock.category.config"
   ],
   "deploySalt": "usdc-aave-vault v1",
-  "minSignerBalanceWei": "1500000000000000",
+  "minSignerBalanceWei": {
+    "deploying": "1500000000000000",
+    "instanceExists": "200000000000000"
+  },
   "accountSalt": "usdc-aave-vault v1",
   "timelockConfig": {
     "minDelay": 86400,
