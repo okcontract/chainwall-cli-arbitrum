@@ -16,9 +16,12 @@
    skipped.
 4. Kill switch (write). `roles pause --dry-run`, send. Then
    `operations simulate exit.json --via account` on a fresh proposal fails
-   while paused, and `users add 0x000000000000000000000000000000000000dEaD --dry-run`
-   is the only kind of write to try: it must revert `EnforcedPause` (read-only
-   via dry run). `roles unpause`, send; simulate passes again.
+   while paused (`EnforcedPause`), and a rule change is blocked too: show it
+   read-only with `cast call REGISTRY "addUser(address)" 0x000000000000000000000000000000000000dEaD --from OWNER --rpc-url RPC`
+   → revert `EnforcedPause` (`--dry-run` on CLI writes only prints calldata,
+   it does not simulate). Send nothing while paused. `roles unpause`, send;
+   simulate passes again and the same `eth_call` no longer reverts. Then
+   `operations withdraw` the fresh proposal so no approved exit stays open.
 5. Guardian (if configured): `cast call REGISTRY "unpause()" --from GUARDIAN --rpc-url RPC`
    → revert (admin only); `cast call REGISTRY "pause()" --from GUARDIAN` → no
    revert in eth_call (would succeed).
