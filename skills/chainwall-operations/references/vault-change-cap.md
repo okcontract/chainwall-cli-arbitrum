@@ -109,6 +109,7 @@ yes once: before step 3's send. Never print keys or passwords.
 
 ## Finish
 
-Append to `usdc-vault-record.md`: old and new program hash, `actionId`, `eta`,
+Append to the vault's record file (`usdc-vault-record.md`, on Sepolia
+`usdc-vault-sepolia-record.md`; create it if missing): old and new program hash, `actionId`, `eta`,
 `expiresAt`, every transaction hash, the three simulation results, and whether
 the change was executed or cancelled.

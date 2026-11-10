@@ -14,7 +14,8 @@
    pick another user with execute rights as `--account` for `sign-actor`,
    `simulate` and `execute`.
 5. Real supply through the Safe (write, user's yes first). Fund the Safe with
-   2 USDC (the user sends). Then, following execution.md:
+   2 USDC (the user sends; Sepolia: the vault setup's faucet mint with SAFE as
+   recipient). Then, following execution.md:
    `operations propose` (`safe` = SAFE, `usdc-vault-safe-supply`, `["1000000"]`,
    policy the safe policy, deadline now + 86400) `--out safe-supply.json`;
    `operations sign-actor safe-supply.json --via safe --account OWNER --out actor.json`;
@@ -26,8 +27,8 @@
 6. One signature is not enough (read-only): simulate with `owners.json`
    holding only `o1.json` → fails with Safe `GS020` (signatures too short).
 7. If step 5 cannot run (Sepolia: Aave over its supply cap, a direct
-   `Pool.supply` from the Safe reverts `51`), run steps 5 and 6 with
-   `usdc-vault-safe-payout` `["1000000"]` instead: the Safe pays the owner
+   `Pool.supply` from the Safe reverts `51`), make no supply proposal and run steps 5 and 6 with
+   `usdc-vault-safe-payout` `["1000000"]` instead (`safe-payout.json`): the Safe pays the owner
    1 USDC, the receipt has the Safe's `ExecutionSuccess` and a USDC
    `Transfer`, the Safe nonce increases by 1, the operation is closed.
 

@@ -69,10 +69,11 @@ Expected selectors: `0x095ea7b3` then `0x04e45aaf` for both.
 
 ## Order
 
-1. Instance: reuse or deploy with terms, as the vault setup's steps 1 and 2.
+1. Instance: reuse or deploy with terms, as the vault setup's steps 1 and 2,
+   with deploy `--salt "swap-desk v1"`.
 2. User, group, member, policy (thresholds `[1]`).
 3. `accounts create --salt "swap-desk v1"`. Record `{{vault}}`.
-4. Catalog: contract versions for the router, WETH and USDC; token records for
+4. Catalog (no `orgs add` needed): contract versions for the router, WETH and USDC; token records for
    WETH (18) and USDC (6), each after its contract version.
 5. Fill, compile, analyze, show results.
 6. Publish the program, then both interactions with `--id`.

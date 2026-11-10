@@ -54,6 +54,7 @@
     "defaultPolicyId": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
   "timelockCategories": [
+    "timelock.category.contract",
     "timelock.category.interaction",
     "timelock.category.activation",
     "timelock.category.policy",

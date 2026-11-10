@@ -8,7 +8,7 @@ invent a command" apply. Take every flag from `chainwall <command> --help --json
 
 A second key, the bot, can run two things on the existing vault, supply to Aave
 and withdraw back to the vault, each capped at 100 USDC and together capped at
-500 USDC per rolling 24 hour window, enforced by a Registry policy meter. The
+500 USDC per UTC day (a fixed window, see Mechanics), enforced by a Registry policy meter. The
 bot cannot pay out, cannot touch any other contract, and cannot change any
 rule. The owner can stop everything with one Registry pause and restart it with
 one unpause. If the bot key leaks, the attacker gets at most one day of
@@ -32,13 +32,18 @@ Resume table against the active profile:
 
 - No instance bound, or any of the vault's steps 1 to 8 not done: run
   [usdc-aave-vault.md](usdc-aave-vault.md) now, steps 1 to 8 and its checks 1
-  to 3, and skip its step 9 (delays) for the moment. Then come back here.
+  to 3, and skip its step 9 (delays) for the moment. Then come back here; the
+  vault's step 10 reads run once, at the very end.
 - Steps 1 to 8 done and delays still at zero: continue here directly. This is
   the fast path.
-- Delays already live (86400): every Registry write below returns `queued` and
-  applies after 24 hours. Say so first, collect each `actionId` and `eta`,
-  execute them with `timelock execute-action` after `eta`, and continue only
-  when the read-back shows the change.
+- Any delay already live (a category reads 86400): Registry writes in that
+  category return `queued` and apply 24 hours later. Say so first. A write
+  whose dependency is still queued cannot be queued yet (token record after
+  its contract version, program and interactions after their policy and
+  catalog entries), so the build takes one 24 hour round per dependency
+  level. Each round: send the writes that are ready, record every `actionId`
+  and `eta`, and stop with the remaining steps listed; resume with
+  `timelock execute-action` after `eta`.
 
 Tell the user which of the three cases applies before the first write.
 
@@ -134,7 +139,8 @@ before the real bot supply in vault-bot-operator-verify.md.
 
 ## Finish
 
-Append to `usdc-vault-record.md`: BOT, group and policy ids, interaction ids,
+Append to the vault's record file (`usdc-vault-record.md`, on Sepolia
+`usdc-vault-sepolia-record.md`; create it if missing): BOT, group and policy ids, interaction ids,
 meter id and limits, every transaction hash, the meter bucket read, and the
 pause and unpause hashes. State plainly: the bot can supply and withdraw up to
 500 USDC per UTC day in operations of at most 100 USDC; it cannot pay out; the
@@ -144,4 +150,5 @@ write to the Registry until unpause.
 Then finish the vault's protection if it is still open: if the vault setup's
 step 9 delays are not set (`timelock get-category-config` on the full category
 names reads `[[0,…]]`), run that step 9 now, exactly as the vault setup
-describes, so the tenant does not stay without delays. Record the result.
+describes, so the tenant does not stay without delays (if `config` is already
+delayed these writes queue too; record their ids). Record the result.

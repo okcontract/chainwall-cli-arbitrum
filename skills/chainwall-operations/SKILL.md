@@ -107,6 +107,34 @@ the user for the address instead. Check any Foundry command with
 `cast <command> --help` before showing it. The signer needs native currency for
 gas.
 
+## CLI behaviours to expect
+
+These hold on the current CLI; none of them is a failed setup.
+
+- RPC: a profile's `rpc.<chainId>` entry shadows `rpc_url`. To change the RPC
+  set both: `config set rpc.<chainId> URL` and `config set rpc_url URL`.
+  `config show` redacts the URL; for `cast --rpc-url` read it from the profile
+  file under `~/.config/chainwall/`.
+- `chainwall status` may report `"complete": false` (the `securityCouncil`
+  read reverts) or `"status": "unavailable"` with `RpcHttpFailure`. Treat the
+  instance as complete when `getInstance(address)` on the factory, called
+  with the Registry address, returns a nonzero Interact.
+- A write that ends in a bare `TransactionFailed` with no hash: read
+  `cast nonce SIGNER`. Unchanged means nothing was broadcast; resend once.
+  Changed means it was sent; recover the receipt, never resend. The same
+  goes for a write that exits with "Recover with chainwall transactions
+  wait HASH": the transaction is usually mined; read its receipt and state.
+  `deploy` can stop between stages this way; resume with `--stage`.
+- `accounts create` can exit `CreatedAccountMismatch` after a confirmed
+  transaction. Check `accounts inspect` at the dry run's predicted address
+  before any retry.
+- A read straight after a confirmed write can be stale once; read again.
+- Terms: `terms document --out terms.md` (add
+  `--ipfs-gateway https://gateway.pinata.cloud/ipfs` if the default gateway
+  fails), then `terms accept-terms --document-file terms.md`. The hash form
+  downloads the document again and fails on the same gateway.
+- `operations status` prints `approved: true|false`, not a count.
+
 ## Preserve the execution model
 
 The Registry stores the catalog, membership, policy and governance state.

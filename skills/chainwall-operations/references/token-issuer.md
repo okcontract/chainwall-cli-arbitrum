@@ -60,7 +60,8 @@ interactions with `--abi myproject/token=token.json`; expected selectors mint
 
 ## Order
 
-1. Instance: reuse or deploy with terms, as the vault setup's steps 1 and 2.
+1. Instance: reuse or deploy with terms, as the vault setup's steps 1 and 2,
+   with deploy `--salt "token-issuer v1"`.
 2. Deploy the demo token (or take the user's address); read `owner()`.
 3. Users, groups, members, both policies, in that order.
 4. `accounts create --salt "token-issuer v1"`. Record `{{issuerAccount}}`.

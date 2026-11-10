@@ -66,7 +66,8 @@ Fill `{{policyId}}`, `{{vault}}`, `{{recipient}}`, `{{wrapId}}`, `{{unwrapId}}`,
 ## Order
 
 1. Instance: reuse the one bound in the active profile, else deploy and accept
-   terms exactly as the vault setup's steps 1 and 2.
+   terms exactly as the vault setup's steps 1 and 2, with deploy
+   `--salt "eth-treasury v1"`.
 2. `users add OWNER` if not a user; `groups create-group`; `groups
    add-group-member`; `policies create-policy` with thresholds `[1]`.
 3. `accounts create --salt "eth-treasury v1"`. Record `{{vault}}`.

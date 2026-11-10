@@ -85,7 +85,8 @@ Sepolia differences, all of them:
   read" and a send fails with a bare `TransactionFailed`. Before the first
   deploy send, run `deploy … --estimate --from OWNER`; it must print
   `"balanceSufficient": true`. If the RPC rejects it, switch `rpc_url` to
-  another Sepolia RPC that passes this estimate before anything is sent. This is the one
+  another Sepolia RPC that passes this estimate before anything is sent (set
+  `rpc.11155111` as well as `rpc_url`, see SKILL.md). This is the one
   case where the setup creates a profile; it never changes the active profile.
 - Factory: the CLI bundles no Sepolia factory (`deploy` fails with
   `FactoryRequired` otherwise); the profile's `factory` key supplies it.
@@ -99,6 +100,15 @@ Sepolia differences, all of them:
 - USDC: Aave on Sepolia accepts only its own test USDC
   (`networks.sepolia.usdc`), not Circle's Sepolia USDC. The catalog still names
   it `circle/usdc`, so every script, id and policy is identical across networks.
+- Aave supply is currently blocked on Sepolia: the test USDC reserve is over
+  its supply cap, so `Pool.supply` reverts with Aave error `51` (confirm with
+  `cast call POOL "supply(address,uint256,address,uint16)" USDC 1000000 VAULT 0 --from VAULT`).
+  While that holds, every real supply, and every check that needs an Aave
+  position, is recorded as "blocked on Sepolia (Aave 51)" with that evidence,
+  and the run continues with the checks that need no position. Payouts and
+  everything else work.
+- Record file: `usdc-vault-sepolia-record.md`; setups that extend this vault
+  append to that same file (create it if missing).
 - Funding the vault (usdc-aave-vault-verify.md check 4): instead of asking the user to send
   USDC, mint 5 test USDC straight to the vault with the open Aave faucet:
   `cast send FAUCET "mint(address,address,uint256)" USDC VAULT 5000000 --account NAME --rpc-url RPC`
@@ -282,7 +292,7 @@ values, not text.
 
 | Step | Live read | Done when |
 | --- | --- | --- |
-| 1 Instance | `status` (with `--all-chains` if needed) | `"status": "installed"` and `"complete": true` |
+| 1 Instance | `getInstance(address)` on the factory with the Registry address (`status` is unreliable, see SKILL.md) | nonzero Interact |
 | 2 Terms | `terms instance-has-accepted-initial-terms` | `true` |
 | 3 Users | `users contains OWNER` | `true` |
 | 3 Group | `registry get-group-members GROUP` | `[["OWNER"]]` (exactly one member, case-insensitive) |
@@ -352,7 +362,7 @@ command seems missing, check these before concluding it does not exist.
    name. If the nonce did change, recover that transaction's receipt first.
 2. Terms. `chainwall terms document --out terms.md`, show the document and its
    hash (retry with `--ipfs-gateway https://gateway.pinata.cloud/ipfs` if the
-   default gateway fails). Accept with `terms accept-terms HASH` only after the
+   default gateway fails). Accept with `terms accept-terms --document-file terms.md` only after the
    user says yes. Nothing executes until the instance has accepted its initial
    terms.
 3. Users, group, policy, in this order: `users add OWNER` (membership requires

@@ -102,10 +102,10 @@ incomplete, or targets anything else.
    --no-auth-accounts --salt "protocol-admin v1"`, confirm `to` is the
    OKFactory, then send it (three stages). `deploy` does not resume: for an
    owner and salt deployed before it fails with `DeploymentAlreadyStarted` and
-   prints the Registry address; read `getInstance(address)` on the factory,
+   prints the Registry address; read `getInstance(address)` on the factory with that Registry address,
    `chainwall login ADDRESS` if `interact` is nonzero, else resume with
    `--stage prepare` then `--stage finalize --registry ADDRESS`, each with its
-   own `--out`. Show the terms (`terms document --out`) and `terms accept-terms`
+   own `--out`. Show the terms (`terms document --out terms.md`) and `terms accept-terms --document-file terms.md`
    only on the user's yes.
 2. In this order: `users add` for the signer and each approver (membership
    needs an existing user); `groups create-group` for both groups;
@@ -115,11 +115,13 @@ incomplete, or targets anything else.
    user (step 2); creation registers the account atomically, which is why
    `timelock.category.account` is never delayed here. Record the address as
    `{{adminAccount}}`.
-4. `orgs add myprotocol` (optional for an admin), then `contracts add` for
-   `myprotocol/params` with the target address; `version` and `label` bytes32
-   `0x…01`, implementation `0x0`. Nothing else goes in the catalog.
+4. Catalog, only this entry, with `V` the bytes32 value 1 written in full and
+   `Z` the zero address:
+   `chainwall contracts add myprotocol params "(TARGET,$V,$Z)" "$V"`.
+   (`orgs add` is optional for an admin; skip it.)
 5. Fill templates, compile, analyze, show results.
-6. `policies program publish` for both policies, then
+6. `policies program publish admin-routine routine-policy.json` and
+   `policies program publish admin-sensitive sensitive-policy.json`, then
    `interactions add set-fee.ls --id admin-set-fee --abi myprotocol/params=params.json`
    and `interactions add set-oracle.ls --id admin-set-oracle --abi myprotocol/params=params.json`.
    `--id` is required: the default id is the file stem, which the policy
