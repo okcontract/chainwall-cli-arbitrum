@@ -167,4 +167,7 @@ Follow [verify.md](verify.md). No local fork or node.
 Write `usdc-vault-record.md`: chain ID, every address, `chainwall --version`,
 every transaction hash, and the configuration read back from chain (users,
 group, policy, catalog, interactions, timelock delays). Add a table of what the
-vault can and cannot do. If the CLI cannot do a step, stop and name it.
+vault can and cannot do, and state that until `finalizeOwnerBootstrap` runs
+(which needs role governance, a completed ownership handover and an explicit
+`TIMELOCK_GOVERNOR` grant) the owner key is the implicit timelock governor: the
+delays bound operators, not the owner. If the CLI cannot do a step, stop and name it.
