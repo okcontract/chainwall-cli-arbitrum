@@ -8,8 +8,9 @@ Read-only unless marked.
 2. After publish with a live delay: `timelock get-action-summary ACTIONID`
    shows `Queued`, and step 1 still rejects. `registry get-policy-program`
    hash unchanged.
-3. Before `eta`: `timelock execute-action ACTIONID --dry-run` reverts
-   `TimelockActionNotReady` (read-only via dry run).
+3. Before `eta`: `cast call REGISTRY "executeAction(bytes32)" ACTIONID --from OWNER --rpc-url RPC`
+   reverts `TimelockActionNotReady(actionId, status)` (`--dry-run` on CLI
+   writes only prints calldata, it does not simulate). Send nothing.
 4. After `eta` (write): execute, summary `Executed`, program hash equals
    `policy.json` `bytecodeHash`.
 5. New cap: `["200000000"]` passes; `["500000001"]` (or `{{cap}} + 1`) rejects;
