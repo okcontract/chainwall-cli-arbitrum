@@ -18,10 +18,11 @@ All checks use the live instance. Do not start a local fork or node.
    snapshot must fail to resolve it; `interactions add --dry-run` must not
    produce a publishable bundle. Report the error.
 4. Real run. Tell the user to send 5 USDC to the OKAccount and wait. Do not
-   move the user's funds yourself. Read the
-   balance with `chainwall accounts assets`. Then propose `usdc-vault-supply`
-   with `["1000000"]`, simulate, and ask the user's yes before `operations
-   execute`. Read back the vault's aUSDC balance (aToken address from
+   move the user's funds yourself. Read the balance with
+   `chainwall accounts assets`. Reuse the proposal from step 2 (amount
+   `1000000`, already proposed and approved by the owner): simulate it as the
+   owner, ask the user's yes, then `operations execute` it. Do not create a
+   second proposal. Read back the vault's aUSDC balance (aToken address from
    `getReserveData(USDC)` on the Pool) and USDC balance.
 
 Record every command, decoded result and transaction hash in the record file.

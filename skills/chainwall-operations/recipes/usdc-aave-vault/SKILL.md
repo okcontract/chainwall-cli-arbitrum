@@ -108,15 +108,20 @@ Apply and verify each step on chain before the next. Follow
 [setup.md](../../references/setup.md) and [authoring.md](../../references/authoring.md)
 for exact commands.
 
-1. `chainwall deploy` through the OKFactory, owner = the signer,
-   `--indexing --no-auth-accounts --salt "usdc-aave-vault v1"`. The salt is
-   fixed so the same owner always resolves to the same instance; rerunning the
-   recipe resumes that instance instead of deploying a second one. Deploy runs
-   three stages (bootstrap, prepare, finalize). If the CLI broadcasts a stage
-   and then times out waiting for the receipt, do not resend: confirm the stage
-   by nonce and receipt, read the registry address from the stage-1 logs, and
-   resume with `--stage prepare` / `--stage finalize --registry ADDRESS`, using
-   a distinct `--out` file per stage (`PathAlreadyExists` otherwise).
+1. Instance. If the profile already binds an instance on 42161, reuse it and
+   skip to step 2. Otherwise run `chainwall instances discover` for the signer:
+   if a bootstrapped instance exists, resume its missing stages with
+   `chainwall deploy --stage prepare|finalize --registry ADDRESS`; if it is
+   complete, `chainwall login ADDRESS`. Only when nothing exists run
+   `chainwall deploy` through the OKFactory, owner = the signer,
+   `--indexing --no-auth-accounts --salt "usdc-aave-vault v1"`. The fixed salt
+   makes the instance address deterministic for a given owner, but `deploy`
+   does not resume on its own: rerunning it against an existing instance
+   returns `DeploymentAlreadyStarted`, which is the signal to take the discover
+   path above. Deploy runs three stages; if the CLI broadcasts a stage and then
+   times out waiting for the receipt, do not resend: confirm the stage by nonce
+   and receipt, read the registry address from the stage-1 logs, and resume by
+   stage with a distinct `--out` file per stage (`PathAlreadyExists` otherwise).
 2. Download and show the terms document and its hash (`terms document --out`).
    If the default IPFS gateway fails, retry with
    `--ipfs-gateway https://gateway.pinata.cloud/ipfs`. Accept only after the
@@ -135,8 +140,14 @@ for exact commands.
    `ActorCapabilityNotSystem`. Show the dry run first.
 9. Last, set each timelock category listed in recipe.json to
    `(minDelay 86400, maxDelay 86400, defaultDelay 86400, gracePeriod 604800,
-   defaultPolicyId 0x0)` and read each back. Set `config` last of all: it
+   defaultPolicyId 0x0)` and read each back with `get-category-config`. The
+   category id is `chainwall id` of the full name, for example
+   `chainwall id timelock.category.policy`; the bare suffix hashes to a
+   different, meaningless id. Set `timelock.category.config` last of all: it
    governs the others, and any delay set earlier queues the remaining setup.
+10. Read `ownerBootstrapFinalized` and the owner's roles and capabilities, and
+   report them. Do not call `finalize-owner-bootstrap` unless the user asks;
+   say in the record whether the owner's bootstrap authority is still open.
 
 If any write returns `queued`, finish that timelock action before the next step.
 

@@ -37,15 +37,15 @@
   "perOperationCapBaseUnits": "100000000",
   "timelockDelaySeconds": 86400,
   "timelockCategories": [
-    "policy",
-    "contract",
-    "token",
-    "interaction",
-    "capability",
-    "group",
-    "role.admin",
-    "diamond",
-    "config"
+    "timelock.category.policy",
+    "timelock.category.contract",
+    "timelock.category.token",
+    "timelock.category.interaction",
+    "timelock.category.capability",
+    "timelock.category.group",
+    "timelock.category.role.admin",
+    "timelock.category.diamond",
+    "timelock.category.config"
   ],
   "deploySalt": "usdc-aave-vault v1",
   "minSignerBalanceWei": "1500000000000000",
@@ -57,5 +57,6 @@
     "gracePeriod": 604800,
     "defaultPolicyId": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "executeCapabilityGrantee": "group:usdc-vault-approvers"
+  "executeCapabilityGrantee": "group:usdc-vault-approvers",
+  "timelockCategoryIdRule": "category id = chainwall id <full name as listed>, e.g. chainwall id timelock.category.policy; never hash the bare suffix"
 }
