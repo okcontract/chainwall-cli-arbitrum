@@ -20,12 +20,11 @@ transferred as the final, separately reviewed step.
 
 ## Network
 
-The network is the one the vault was built on. On Sepolia test mode, take
-USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
-[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
-every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
-as the vault setup's Network section says. Test USDC comes from the Aave
-faucet there, not from the user.
+Arbitrum One by default. In Sepolia test mode (the user says so, or the
+profile's chain is 11155111), take the factory, RPC and balance floors from
+`networks.sepolia` in [usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json)
+and read every "Arbitrum One" and ETH figure below as its Sepolia equivalent;
+the demo contract is deployed on that chain and nothing else changes.
 
 ## Target contract
 
@@ -46,19 +45,19 @@ contract with AccessControl, map every role holder the same way.
 Fixed values are in [setup.json](../assets/protocol-admin/setup.json). Verify on chain and stop on
 any mismatch:
 
-- Chain 42161. RPC: the one in the profile, else `https://arb1.arbitrum.io/rpc`.
+- Chain 42161 (11155111 in Sepolia test mode). RPC: the one in the profile,
+  else `https://arb1.arbitrum.io/rpc`.
 - OKFactory `0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b` (the `to` of
-  `chainwall deploy --dry-run`).
+  `chainwall deploy --dry-run`); Sepolia `0xA27260B6c0F31Ed0f06daE7789eF00A6A1a9C8b7`.
 - Target contract: address from the user, or the deployed demo. It must have
   code and return the user's signer from `owner()`.
 
 ## Signer and approvers
 
-Signer: resolve the keystore as the base skill says (`cast wallet list`; one
-entry is the signer, several means ask, none means stop). Owner address from
-`cast wallet address --account NAME`. No password in chat, no password file;
-Touch ID enrollment or the user's own terminal for signatures. Check the
-balance with `cast balance`, floor 0.0015 ETH.
+Signer: exactly as the base skill's "Check the signer first" section says
+(keystore from `cast wallet list`, unlock as described there). Owner address
+from `cast wallet address --account NAME`. Check the balance with
+`cast balance`, floor 0.0015 ETH (Sepolia: the test-mode floor).
 
 The signer is the owner, the routine operator, and one approver. If the user
 names more approver addresses, add each to `admin-approvers` and set the
@@ -68,9 +67,10 @@ sensitive changes, and the setup says so in the final record.
 
 ## Profile
 
-Use the active Chainwall profile (`chainwall config show`). Set `chain 42161`
-and the RPC on it if missing. Do not create or switch profiles. If it binds an
-instance on 42161, reuse it; otherwise step 1 deploys and binds a new one.
+Use the active Chainwall profile (`chainwall config show`), or the one the
+user names. Set `chain` (42161, or 11155111 in test mode) and the RPC on it if
+missing. Do not create or switch profiles unasked. If it binds an instance on
+that chain, reuse it; otherwise step 1 deploys and binds a new one.
 
 ## Names
 
@@ -97,7 +97,7 @@ incomplete, or targets anything else.
 
 ## Order
 
-1. Instance. If the profile binds an instance on 42161, reuse it. Otherwise
+1. Instance. If the profile binds an instance on the chain, reuse it. Otherwise
    `chainwall deploy --dry-run` with `--owner OWNER --indexing
    --no-auth-accounts --salt "protocol-admin v1"`, confirm `to` is the
    OKFactory, then send it (three stages). `deploy` does not resume: for an
