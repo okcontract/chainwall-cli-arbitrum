@@ -1,6 +1,6 @@
 ---
 name: chainwall-operations
-description: Set up and operate Chainwall vaults, Safes, and onchain automation on Arbitrum One through the native CLI. Use for tenant onboarding, holdings reports, Lambdascript interactions, approval policies, execution, operational recovery, and complete builds such as a guarded USDC vault on Aave v3, a bot operator with a daily budget, two-approval treasury payouts, an emergency exit, a guarded Safe, a timelocked cap change, putting a protocol's admin role behind Chainwall, an ETH treasury that wraps to WETH and pays fixed recipients, a Uniswap v3 swap desk, or a token issuer with a metered minter.
+description: Set up and operate Chainwall vaults, Safes, and onchain automation on Arbitrum One through the native CLI. Use for tenant onboarding, holdings reports, Lambdascript interactions, approval policies, execution, operational recovery, and complete builds such as a guarded USDC vault on Aave v3, a bot operator with a daily budget, two-approval treasury payouts, an emergency exit, a guarded Safe, a timelocked cap change, putting a protocol's admin role behind Chainwall, an ETH treasury that wraps to WETH and pays fixed recipients, a Uniswap v3 swap desk, a token issuer with a metered minter, or tenant governance (guardians, approved rule changes, tiered delays, delegated admin, admin rotation, owner handover).
 ---
 
 # Operate Chainwall
@@ -18,9 +18,8 @@ blocks the next step. Setup work does not authorize unrelated asset movements,
 new administrators, terms acceptance, or recurring jobs.
 
 Start with `chainwall --version`, `chainwall --help`, and `chainwall config show`.
-Confirm Arbitrum One (chain ID `42161`), or Ethereum Sepolia (`11155111`) when a
-setup's test mode is requested, and the intended Registry in the selected
-profile. Use explicit profiles for separate tenants and preserve existing
+Confirm Arbitrum One (chain ID `42161`) and the intended Registry in the
+selected profile. Use explicit profiles for separate tenants and preserve existing
 configuration; use `CHAINWALL_CONFIG_DIR` for an isolated project when needed.
 All relative reference and asset paths below are relative to this skill folder,
 not the working directory.
@@ -58,8 +57,20 @@ not the working directory.
   [swap-desk.md](references/swap-desk.md) (a desk that can only swap WETH
   and USDC through Uniswap v3 back to itself, with a minimum-out argument),
   [token-issuer.md](references/token-issuer.md) (a demo ERC-20 whose minter
-  is metered per 24 hours and whose burn and pause stay owner-only). Each
-  has a companion `*-verify.md` and its templates under `assets/<name>/`.
+  is metered per 24 hours and whose burn and pause stay owner-only). Governance
+  setups change who may change the rules; they share
+  [governance.md](references/governance.md) and need no vault:
+  [gov-guardians.md](references/gov-guardians.md) (a group that can pause and
+  cancel but not act), [gov-approved-changes.md](references/gov-approved-changes.md)
+  (rule changes need approvals plus a delay),
+  [gov-tiered-delays.md](references/gov-tiered-delays.md) (a longer delay for
+  constitutional changes), [gov-delegated-admin.md](references/gov-delegated-admin.md)
+  (narrow groups for routine admin jobs),
+  [gov-admin-rotation.md](references/gov-admin-rotation.md) (add or replace an
+  admin through a delayed change), [gov-handover.md](references/gov-handover.md)
+  (close the owner shortcut for good). Each setup
+  has a companion `*-verify.md`; templates and fixed values are under
+  `assets/<name>/` (`assets/governance/` for the governance setups).
 
 Read only the relevant references. The installed manual is normally
 `share/doc/chainwall/manual.md` beneath the distribution prefix; in a checkout,
@@ -106,6 +117,46 @@ Read the owner address with `cast wallet address --account NAME` (add
 the user for the address instead. Check any Foundry command with
 `cast <command> --help` before showing it. The signer needs native currency for
 gas.
+
+## CLI behaviours to expect
+
+These hold on the current CLI; none of them is a failed setup.
+
+- RPC: a profile's `rpc.<chainId>` entry shadows `rpc_url`. To change the RPC
+  set both: `config set rpc.<chainId> URL` and `config set rpc_url URL`.
+  `config show` redacts the URL; for `cast --rpc-url` read it from the profile
+  file under `~/.config/chainwall/`.
+- `chainwall status` may report `"complete": false` (the `securityCouncil`
+  read reverts) or `"status": "unavailable"` with `RpcHttpFailure`. Treat the
+  instance as complete when `getInstance(address)` on the factory, called
+  with the Registry address, returns a nonzero Interact (the address the profile saves as `interact`).
+- A write that ends in a bare `TransactionFailed` with no hash: read
+  `cast nonce SIGNER`. Unchanged means nothing was broadcast; resend once.
+  Changed means it was sent; recover the receipt, never resend. The same
+  goes for a write that exits with "Recover with chainwall transactions
+  wait HASH": the transaction is usually mined; read its receipt and state.
+  `deploy` can stop between stages this way; resume with `--stage`.
+- `accounts create` can exit `CreatedAccountMismatch` after a confirmed
+  transaction. Check `accounts inspect` at the dry run's predicted address
+  before any retry.
+- A read straight after a confirmed write can be stale once; read again.
+- Fees: the CLI can choose a tip far above what `--estimate` shows. Cap it
+  on any write with `--max-fee AMOUNT --priority-fee AMOUNT` (wei or gwei),
+  for example twice `cast gas-price`.
+- Terms: `terms document --out terms.md` (add
+  `--ipfs-gateway https://gateway.pinata.cloud/ipfs` if the default gateway
+  fails), then `terms accept-terms --document-file terms.md`. The hash form
+  downloads the document again and fails on the same gateway.
+- `operations status` prints `approved: true|false`, not a count.
+- `--out FILE` never overwrites. Name proposals `<name>-proposal.json` so
+  they do not collide with a compiled `<name>.json`, and use a new name when
+  resending after a failed attempt.
+- If `deploy` exits before printing the Registry, run the same `deploy`
+  again: it fails with `DeploymentAlreadyStarted` and prints the address.
+- `operations withdraw ID` every test proposal you do not execute, so no
+  approved operation stays open. If `operations propose` exits with an RPC
+  error after broadcasting, its saved file is unusable: withdraw that
+  operation and propose again under a new file name.
 
 ## Preserve the execution model
 

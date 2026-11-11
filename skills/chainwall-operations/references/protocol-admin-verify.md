@@ -11,10 +11,11 @@ All checks use the live instance and target. No local fork or node.
 2. Routine cap. `policies program simulate admin-routine` with a context for
    `admin-set-fee` and args `["5000"]` must reject (cap is 1000 bps).
 3. Wrong policy for a sensitive call. Simulate `admin-set-oracle` under
-   `admin-routine`: the interaction's own `$subjectPolicy` check rejects it, and
-   the routine program's id allowlist rejects it. Report both.
-4. Unauthorized actor. `operations propose` `admin-set-oracle` with the real
-   oracle address, deadline now + 86400, `--out oracle.json`. The CLI's `--from`
+   `admin-routine`: the routine program's id check rejects it (`ERR_01`). The
+   interaction's own `$subjectPolicy` check is a second barrier; show it from
+   `interactions source`, since the simulation stops at the program.
+4. Unauthorized actor. `operations propose` `admin-set-oracle` with the oracle address
+   the user names (demo: any nonzero address), deadline now + 86400, `--out oracle.json`. The CLI's `--from`
    must match the signer, so test from outside read-only:
    `cast call INTERACT "executeFromAccount(uint256,bytes32,uint256[],uint256)" OPID SET_ORACLE_ID "[ORACLE_AS_UINT]" 100000 --from 0x000000000000000000000000000000000000dEaD --rpc-url RPC`
    must revert "AccessControlPolicy: caller is not a user". Policy programs
@@ -25,7 +26,7 @@ All checks use the live instance and target. No local fork or node.
    unrelated reason.) Then execute `oracle.json` as the signer so the oracle is
    set.
 5. Premature sensitive change. Publish a new interaction `admin-set-oracle-v2`
-   (same script). With the `interaction` category delayed, the write returns
+   (copy `set-oracle.ls` to `set-oracle-v2.ls` and publish that with `--id admin-set-oracle-v2`). With the `interaction` category delayed, the write returns
    `queued` with one `queuedActions` id. Before the delay, read-only:
    `cast call REGISTRY "executeAction(bytes32)" ACTIONID --from OWNER --rpc-url RPC`
    reverts `TimelockActionNotReady(actionId, 1)` (`--dry-run` only prints

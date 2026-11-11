@@ -1,7 +1,7 @@
 # Setup: ETH treasury (wrap, unwrap, pay in WETH)
 
 Read `../SKILL.md` first. The shared mechanics (signer, profile, instance
-deploy or reuse, terms, Sepolia test mode, resume rules) are the ones in
+deploy or reuse, terms, resume rules) are the ones in
 [usdc-aave-vault.md](usdc-aave-vault.md); this setup follows those sections by
 name and does not need that vault to exist. Take every flag from
 `chainwall <command> --help --json`.
@@ -31,13 +31,12 @@ counterpart of the USDC vault and proves the payable call path.
 
 ## Inputs
 
-From [setup.json](../assets/eth-treasury/setup.json), network block by chain.
+From [setup.json](../assets/eth-treasury/setup.json) (Arbitrum One).
 Verify on chain and stop on any mismatch:
 
 - WETH: `symbol()` is WETH, `name()` is Wrapped Ether. Arbitrum One
-  `0x82aF49447D8a07e3bd95BD0d56f35241523fBab1`; Sepolia
-  `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14`.
-- Factory, RPC and floors as in the vault setup's network block.
+  `0x82aF49447D8a07e3bd95BD0d56f35241523fBab1`.
+- Factory, RPC and floors as in the vault setup's Network and Inputs.
 
 Ask the user for one value: the recipient address, RECIPIENT. Nothing else.
 
@@ -59,14 +58,15 @@ Compute every id with `chainwall id NAME`.
 [pay.ls](../assets/eth-treasury/pay.ls), [policy.ls](../assets/eth-treasury/policy.ls).
 Fill `{{policyId}}`, `{{vault}}`, `{{recipient}}`, `{{wrapId}}`, `{{unwrapId}}`,
 `{{payId}}`, `{{capWei}}`. Compile with
-`--abi weth/weth=../assets/eth-treasury/weth.json`. Expected selectors: wrap
+`--abi weth/weth=weth.json` (copy the asset files into the working folder). Expected selectors: wrap
 `0xd0e30db0`, unwrap `0x2e1a7d4d`, pay `0xa9059cbb`. The program compiles with
 `policies program compile`.
 
 ## Order
 
 1. Instance: reuse the one bound in the active profile, else deploy and accept
-   terms exactly as the vault setup's steps 1 and 2.
+   terms exactly as the vault setup's steps 1 and 2, with deploy
+   `--salt "eth-treasury v1"`.
 2. `users add OWNER` if not a user; `groups create-group`; `groups
    add-group-member`; `policies create-policy` with thresholds `[1]`.
 3. `accounts create --salt "eth-treasury v1"`. Record `{{vault}}`.
@@ -78,10 +78,11 @@ Fill `{{policyId}}`, `{{vault}}`, `{{recipient}}`, `{{wrapId}}`, `{{unwrapId}}`,
    `interactions add` each script with `--id` and `--abi weth/weth=weth.json`.
 7. `capabilities grant-capability-group` of `cap.registry.interaction.execute`
    to the group.
-8. Fund: the user sends ETH to the account (on Sepolia, the owner sends
-   0.02 test ETH with `cast send VAULT --value 20000000000000000`).
-9. Delays: the vault setup's step 9, unless other setups still have to layer on
-   this instance.
+8. Fund: the user sends ETH to the account, or agrees that OWNER sends it:
+   `cast send VAULT --value WEI --account NAME --rpc-url RPC`.
+9. Delays, only after the verify file has passed (a mistake found later
+   takes 24 hours to fix): the vault setup's step 9 (skip only if the user says more setups
+   will be added to this instance).
 
 ## Pauses
 

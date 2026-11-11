@@ -17,12 +17,9 @@ owner alone can no longer pay anyone; until step 8 runs it still can.
 
 ## Network
 
-The network is the one the vault was built on. On Sepolia test mode, take
-USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
-[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
-every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
-as the vault setup's Network section says. Test USDC comes from the Aave
-faucet there, not from the user.
+Arbitrum One (chain `42161`), the network the vault is on. USDC, Pool,
+factory, RPC and balance floors are the ones in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json).
 
 ## Prerequisites
 
@@ -32,13 +29,18 @@ Resume table against the active profile:
 
 - No instance bound, or any of the vault's steps 1 to 8 not done: run
   [usdc-aave-vault.md](usdc-aave-vault.md) now, steps 1 to 8 and its checks 1
-  to 3, and skip its step 9 (delays) for the moment. Then come back here.
+  to 3, and skip its step 9 (delays) for the moment. Then come back here; the
+  vault's step 10 reads run once, at the very end.
 - Steps 1 to 8 done and delays still at zero: continue here directly. This is
   the fast path.
-- Delays already live (86400): every Registry write below returns `queued` and
-  applies after 24 hours. Say so first, collect each `actionId` and `eta`,
-  execute them with `timelock execute-action` after `eta`, and continue only
-  when the read-back shows the change.
+- Any delay already live (a category reads 86400): Registry writes in that
+  category return `queued` and apply 24 hours later. Say so first. A write
+  whose dependency is still queued cannot be queued yet (token record after
+  its contract version, program and interactions after their policy and
+  catalog entries), so the build takes one 24 hour round per dependency
+  level. Each round: send the writes that are ready, record every `actionId`
+  and `eta`, and stop with the remaining steps listed; resume with
+  `timelock execute-action` after `eta`.
 
 Tell the user which of the three cases applies before the first write.
 
@@ -123,7 +125,8 @@ vault-treasury-approvals-verify.md, and before step 8.
 
 ## Finish
 
-Append to `usdc-vault-record.md`: group members, policy and interaction ids,
+Append to the vault's record file (`usdc-vault-record.md`; create it if
+missing): group members, policy and interaction ids,
 recipients, caps, meter id, every transaction hash, and the approval sequence
 of the test payout. State: payouts go only to the two listed addresses, need
 two of three approvals, and are limited to 1000 USDC each and 5000 USDC per
@@ -132,4 +135,5 @@ two of three approvals, and are limited to 1000 USDC each and 5000 USDC per
 Then finish the vault's protection if it is still open: if the vault setup's
 step 9 delays are not set (`timelock get-category-config` on the full category
 names reads `[[0,…]]`), run that step 9 now, exactly as the vault setup
-describes, so the tenant does not stay without delays. Record the result.
+describes, so the tenant does not stay without delays (if `config` is already
+delayed these writes queue too; record their ids). Record the result.

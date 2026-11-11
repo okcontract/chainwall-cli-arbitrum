@@ -225,7 +225,7 @@ chain table entry, then profile default. Changing chains does not reuse the
 previous chain's `rpc_url`. Named chains and their numeric IDs match the same
 table entries. A global `instance` is a fallback when no chain-specific instance
 exists. Supported names: ethereum/mainnet, base, arbitrum, optimism, polygon,
-bsc, avalanche, gnosis, sepolia, base-sepolia, anvil/localhost. Other chains use a
+bsc, avalanche, gnosis, anvil/localhost. Other chains use a
 numeric ID and explicit RPC URL.
 
 Environment overrides: `CHAINWALL_PROFILE`, `CHAINWALL_CHAIN`,

@@ -20,11 +20,8 @@ transferred as the final, separately reviewed step.
 
 ## Network
 
-Arbitrum One by default. In Sepolia test mode (the user says so, or the
-profile's chain is 11155111), take the factory, RPC and balance floors from
-`networks.sepolia` in [usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json)
-and read every "Arbitrum One" and ETH figure below as its Sepolia equivalent;
-the demo contract is deployed on that chain and nothing else changes.
+Arbitrum One only (chain `42161`). If the profile points at another chain,
+stop and say so.
 
 ## Target contract
 
@@ -45,10 +42,10 @@ contract with AccessControl, map every role holder the same way.
 Fixed values are in [setup.json](../assets/protocol-admin/setup.json). Verify on chain and stop on
 any mismatch:
 
-- Chain 42161 (11155111 in Sepolia test mode). RPC: the one in the profile,
+- Chain 42161. RPC: the one in the profile,
   else `https://arb1.arbitrum.io/rpc`.
 - OKFactory `0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b` (the `to` of
-  `chainwall deploy --dry-run`); Sepolia `0xA27260B6c0F31Ed0f06daE7789eF00A6A1a9C8b7`.
+  `chainwall deploy --dry-run`).
 - Target contract: address from the user, or the deployed demo. It must have
   code and return the user's signer from `owner()`.
 
@@ -57,7 +54,7 @@ any mismatch:
 Signer: exactly as the base skill's "Check the signer first" section says
 (keystore from `cast wallet list`, unlock as described there). Owner address
 from `cast wallet address --account NAME`. Check the balance with
-`cast balance`, floor 0.0015 ETH (Sepolia: the test-mode floor).
+`cast balance`, floor 0.0015 ETH.
 
 The signer is the owner, the routine operator, and one approver. If the user
 names more approver addresses, add each to `admin-approvers` and set the
@@ -68,7 +65,7 @@ sensitive changes, and the setup says so in the final record.
 ## Profile
 
 Use the active Chainwall profile (`chainwall config show`), or the one the
-user names. Set `chain` (42161, or 11155111 in test mode) and the RPC on it if
+user names. Set `chain` (42161) and the RPC on it if
 missing. Do not create or switch profiles unasked. If it binds an instance on
 that chain, reuse it; otherwise step 1 deploys and binds a new one.
 
@@ -102,10 +99,10 @@ incomplete, or targets anything else.
    --no-auth-accounts --salt "protocol-admin v1"`, confirm `to` is the
    OKFactory, then send it (three stages). `deploy` does not resume: for an
    owner and salt deployed before it fails with `DeploymentAlreadyStarted` and
-   prints the Registry address; read `getInstance(address)` on the factory,
+   prints the Registry address; read `getInstance(address)` on the factory with that Registry address,
    `chainwall login ADDRESS` if `interact` is nonzero, else resume with
    `--stage prepare` then `--stage finalize --registry ADDRESS`, each with its
-   own `--out`. Show the terms (`terms document --out`) and `terms accept-terms`
+   own `--out`. Show the terms (`terms document --out terms.md`) and `terms accept-terms --document-file terms.md`
    only on the user's yes.
 2. In this order: `users add` for the signer and each approver (membership
    needs an existing user); `groups create-group` for both groups;
@@ -115,11 +112,13 @@ incomplete, or targets anything else.
    user (step 2); creation registers the account atomically, which is why
    `timelock.category.account` is never delayed here. Record the address as
    `{{adminAccount}}`.
-4. `orgs add myprotocol` (optional for an admin), then `contracts add` for
-   `myprotocol/params` with the target address; `version` and `label` bytes32
-   `0x…01`, implementation `0x0`. Nothing else goes in the catalog.
+4. Catalog, only this entry, with `V` the bytes32 value 1 written in full and
+   `Z` the zero address:
+   `chainwall contracts add myprotocol params "(TARGET,$V,$Z)" "$V"`.
+   (`orgs add` is optional for an admin; skip it.)
 5. Fill templates, compile, analyze, show results.
-6. `policies program publish` for both policies, then
+6. `policies program publish admin-routine routine-policy.json` and
+   `policies program publish admin-sensitive sensitive-policy.json`, then
    `interactions add set-fee.ls --id admin-set-fee --abi myprotocol/params=params.json`
    and `interactions add set-oracle.ls --id admin-set-oracle --abi myprotocol/params=params.json`.
    `--id` is required: the default id is the file stem, which the policy
@@ -129,13 +128,14 @@ incomplete, or targets anything else.
 8. Set each timelock category in setup.json to `(86400, 86400, 86400,
    604800, 0x0)` and read each back. The id is `chainwall id` of the full name
    (`chainwall id timelock.category.interaction`), never the bare suffix.
-   `timelock.category.config` last. From here, every new interaction waits a
+   `timelock.category.config` last, and only after every other category reads
+   back 86400 (resend any that does not; after `config` a missed one queues
+   for a day). From here, every new interaction waits a
    day. Then read `ownerBootstrapFinalized` and the owner's roles and report
-   them; do not finalize unless the user asks. The factory already enabled role
-   governance and completed the ownership handover; finalizing needs only an
-   explicit `TIMELOCK_GOVERNOR` grant to a group the owner is in, and until
-   then the owner key is the implicit timelock governor, so the delays bound
-   operators, not the owner.
+   them; do not finalize unless the user asks. Until it is finalized the owner key
+   is an implicit timelock governor: it can reconfigure delays without an
+   explicit grant, though that change itself waits for the `config` delay.
+   [gov-handover.md](gov-handover.md) closes this.
 9. Ownership handover, as its own reviewed step: show the exact
    `transferOwnership(adminAccount)` call on the target, the current owner, and
    what the EOA loses. Wait for the user's yes. The user signs it with the

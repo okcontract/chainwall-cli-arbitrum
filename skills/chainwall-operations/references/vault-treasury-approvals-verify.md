@@ -6,10 +6,10 @@
 2. One approval is not enough (write for the proposal only). Owner:
    `operations propose` `usdc-vault-pay-<a>`, args `["1000000"]`, safe VAULT,
    policyId the treasury policy, deadline now + 86400, `--out pay.json`.
-   `operations status OPID` shows 1 approval. `operations simulate pay.json --via account`
+   `operations status OPID` shows `approved: false`. `operations simulate pay.json --via account`
    fails for missing approvals; report the decoded reason.
 3. Second approval (write): `operations approve OPID --account APPROVER2`
-   (or from the approver's machine). `operations status OPID` shows 2.
+   (or from the approver's machine). `operations status OPID` shows `approved: true`.
 4. Real payout (write, user's yes first): read `accounts assets VAULT`; if
    below 1 USDC ask the user to fund it. `operations execute pay.json --via account`.
    Read the recipient's USDC balance before and after: +1000000. Read the meter
@@ -20,7 +20,7 @@
    execution time; do not perform it.
 6. Owner route closed (after step 8): `registry get-interaction-flags` of the
    `usdc-vault-payout` id reads `2` (bit 1 set). Interact still accepts an
-   `operations propose` for it, so simulate that proposal with
+   `operations propose` for it (policyId `usdc-vault-policy`), so simulate that proposal with
    `operations simulate --via account`: it fails with the decoded revert
    `InteractionInactive(id)`; then `operations withdraw OPID` so no open
    operation is left. If step 8 was `queued`, read the queued action instead

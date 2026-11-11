@@ -25,9 +25,10 @@
    → pass; execute the same way. Read the Safe's aUSDC balance: 1000000.
 6. One signature is not enough (read-only): simulate with `owners.json`
    holding only `o1.json` → fails with Safe `GS020` (signatures too short).
-7. If step 5 cannot run (Sepolia: Aave over its supply cap, a direct
-   `Pool.supply` from the Safe reverts `51`), run steps 5 and 6 with
-   `usdc-vault-safe-payout` `["1000000"]` instead: the Safe pays the owner
+7. If step 5 cannot run because Aave itself refuses the supply (a direct
+   `Pool.supply` from the Safe reverts, for example `51` when the reserve is
+   at its supply cap), make no supply proposal and run steps 5 and 6 with
+   `usdc-vault-safe-payout` `["1000000"]` instead (`safe-payout.json`): the Safe pays the owner
    1 USDC, the receipt has the Safe's `ExecutionSuccess` and a USDC
    `Transfer`, the Safe nonce increases by 1, the operation is closed.
 

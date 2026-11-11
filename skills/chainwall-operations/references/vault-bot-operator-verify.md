@@ -19,8 +19,7 @@
    source-verified and bucket-read only.
 5. Kill switch (write). Owner: `roles pause`. Then the bot's
    `operations simulate bot-supply.json --via account --account BOT` fails
-   (Registry reads revert while paused). Owner: `roles unpause`; simulate passes
-   again. Record both hashes.
+   (`EnforcedPause`). Owner: `roles unpause`; the simulation passes again. Record both hashes.
 6. Bot cannot change rules: `cast call REGISTRY "setPolicyProgram(bytes32,bytes,uint32)" POLICY 0x00 1 --from BOT --rpc-url RPC`
    → revert (not admin, no policy capability).
 
