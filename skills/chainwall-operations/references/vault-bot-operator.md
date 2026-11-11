@@ -17,12 +17,9 @@ budget, into Aave or back to the vault, and nowhere else.
 
 ## Network
 
-The network is the one the vault was built on. On Sepolia test mode, take
-USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
-[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
-every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
-as the vault setup's Network section says. Test USDC comes from the Aave
-faucet there, not from the user.
+Arbitrum One (chain `42161`), the network the vault is on. USDC, Pool,
+factory, RPC and balance floors are the ones in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json).
 
 ## Prerequisites
 
@@ -139,8 +136,8 @@ before the real bot supply in vault-bot-operator-verify.md.
 
 ## Finish
 
-Append to the vault's record file (`usdc-vault-record.md`, on Sepolia
-`usdc-vault-sepolia-record.md`; create it if missing): BOT, group and policy ids, interaction ids,
+Append to the vault's record file (`usdc-vault-record.md`; create it if
+missing): BOT, group and policy ids, interaction ids,
 meter id and limits, every transaction hash, the meter bucket read, and the
 pause and unpause hashes. State plainly: the bot can supply and withdraw up to
 500 USDC per UTC day in operations of at most 100 USDC; it cannot pay out; the

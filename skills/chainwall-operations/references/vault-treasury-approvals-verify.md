@@ -11,7 +11,7 @@
 3. Second approval (write): `operations approve OPID --account APPROVER2`
    (or from the approver's machine). `operations status OPID` shows `approved: true`.
 4. Real payout (write, user's yes first): read `accounts assets VAULT`; if
-   below 1 USDC ask the user to fund it (Sepolia: mint 5 from the faucet). `operations execute pay.json --via account`.
+   below 1 USDC ask the user to fund it. `operations execute pay.json --via account`.
    Read the recipient's USDC balance before and after: +1000000. Read the meter
    bucket (`registry get-policy-meter-bucket POLICY METER 2592000 BUCKET VAULT32 0x00…00 0x00…00 0x00…00` (VAULT32 is the vault address left-padded to 32 bytes; the three zero words are full 32-byte zeros),
    `BUCKET = block.timestamp / 2592000`): `1000000`.

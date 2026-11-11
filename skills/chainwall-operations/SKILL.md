@@ -18,9 +18,8 @@ blocks the next step. Setup work does not authorize unrelated asset movements,
 new administrators, terms acceptance, or recurring jobs.
 
 Start with `chainwall --version`, `chainwall --help`, and `chainwall config show`.
-Confirm Arbitrum One (chain ID `42161`), or Ethereum Sepolia (`11155111`) when a
-setup's test mode is requested, and the intended Registry in the selected
-profile. Use explicit profiles for separate tenants and preserve existing
+Confirm Arbitrum One (chain ID `42161`) and the intended Registry in the
+selected profile. Use explicit profiles for separate tenants and preserve existing
 configuration; use `CHAINWALL_CONFIG_DIR` for an isolated project when needed.
 All relative reference and asset paths below are relative to this skill folder,
 not the working directory.
@@ -141,10 +140,9 @@ These hold on the current CLI; none of them is a failed setup.
   transaction. Check `accounts inspect` at the dry run's predicted address
   before any retry.
 - A read straight after a confirmed write can be stale once; read again.
-- Fees: the CLI can choose a tip far above `--estimate` (seen on Sepolia: a
-  0.5 gwei tip made deploy stage 1 cost 0.038 ETH). Cap it on any write with
-  `--max-fee AMOUNT --priority-fee AMOUNT` (wei or gwei), for example twice
-  `cast gas-price` and a 1000 wei tip on Sepolia.
+- Fees: the CLI can choose a tip far above what `--estimate` shows. Cap it
+  on any write with `--max-fee AMOUNT --priority-fee AMOUNT` (wei or gwei),
+  for example twice `cast gas-price`.
 - Terms: `terms document --out terms.md` (add
   `--ipfs-gateway https://gateway.pinata.cloud/ipfs` if the default gateway
   fails), then `terms accept-terms --document-file terms.md`. The hash form

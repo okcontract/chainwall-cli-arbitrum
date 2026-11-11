@@ -18,12 +18,9 @@ from inside the Safe (self-calls are blocked by the guard).
 
 ## Network
 
-The network is the one the vault was built on. On Sepolia test mode, take
-USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
-[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
-every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
-as the vault setup's Network section says. Test USDC comes from the Aave
-faucet there, not from the user.
+Arbitrum One (chain `42161`), the network the vault is on. USDC, Pool,
+factory, RPC and balance floors are the ones in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json).
 
 ## Prerequisites
 
@@ -116,8 +113,8 @@ vault-safe-backed-verify.md.
 
 ## Finish
 
-Append to the vault's record file (`usdc-vault-record.md`, on Sepolia
-`usdc-vault-sepolia-record.md`; create it if missing): Safe address, owners, threshold, guard,
+Append to the vault's record file (`usdc-vault-record.md`; create it if
+missing): Safe address, owners, threshold, guard,
 policy and interaction ids, every transaction hash, and the signature files
 used for the test operation. State: the Safe can only act through Interact;
 both owners sign every operation; the owner set cannot be changed from inside

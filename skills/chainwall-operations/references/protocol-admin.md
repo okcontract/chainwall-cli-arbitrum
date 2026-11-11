@@ -20,11 +20,8 @@ transferred as the final, separately reviewed step.
 
 ## Network
 
-Arbitrum One by default. In Sepolia test mode (the user says so, or the
-profile's chain is 11155111), take the factory, RPC and balance floors from
-`networks.sepolia` in [usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json)
-and read every "Arbitrum One" and ETH figure below as its Sepolia equivalent;
-the demo contract is deployed on that chain and nothing else changes.
+Arbitrum One only (chain `42161`). If the profile points at another chain,
+stop and say so.
 
 ## Target contract
 
@@ -45,10 +42,10 @@ contract with AccessControl, map every role holder the same way.
 Fixed values are in [setup.json](../assets/protocol-admin/setup.json). Verify on chain and stop on
 any mismatch:
 
-- Chain 42161 (11155111 in Sepolia test mode). RPC: the one in the profile,
+- Chain 42161. RPC: the one in the profile,
   else `https://arb1.arbitrum.io/rpc`.
 - OKFactory `0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b` (the `to` of
-  `chainwall deploy --dry-run`); Sepolia `0xA27260B6c0F31Ed0f06daE7789eF00A6A1a9C8b7`.
+  `chainwall deploy --dry-run`).
 - Target contract: address from the user, or the deployed demo. It must have
   code and return the user's signer from `owner()`.
 
@@ -57,7 +54,7 @@ any mismatch:
 Signer: exactly as the base skill's "Check the signer first" section says
 (keystore from `cast wallet list`, unlock as described there). Owner address
 from `cast wallet address --account NAME`. Check the balance with
-`cast balance`, floor 0.0015 ETH (Sepolia: the test-mode floor).
+`cast balance`, floor 0.0015 ETH.
 
 The signer is the owner, the routine operator, and one approver. If the user
 names more approver addresses, add each to `admin-approvers` and set the
@@ -68,7 +65,7 @@ sensitive changes, and the setup says so in the final record.
 ## Profile
 
 Use the active Chainwall profile (`chainwall config show`), or the one the
-user names. Set `chain` (42161, or 11155111 in test mode) and the RPC on it if
+user names. Set `chain` (42161) and the RPC on it if
 missing. Do not create or switch profiles unasked. If it binds an instance on
 that chain, reuse it; otherwise step 1 deploys and binds a new one.
 

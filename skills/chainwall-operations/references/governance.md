@@ -2,7 +2,7 @@
 
 Read `../SKILL.md` first. The `gov-*.md` setups change who may change a
 tenant's rules. They all use the mechanics below. Signer, profile, network
-(Arbitrum One by default, Sepolia test mode on request), instance deploy,
+(Arbitrum One, chain `42161`), instance deploy,
 terms and resume are the ones in [usdc-aave-vault.md](usdc-aave-vault.md),
 followed by section name; no vault is needed, so ignore that file's profile
 name, record name, USDC figures and signature counts. Use the active profile
@@ -38,7 +38,7 @@ show it, and `terms accept-terms --document-file terms.md` on the user's yes.
 OWNER signs the setup. Other people (guardians, approvers, delegates) are
 addresses the user gives; each must be an EOA they control (`cast code ADDR`
 is `0x`) and needs a little gas for its own transactions (0.0002 ETH on
-Arbitrum One, 0.002 on Sepolia). When another person must sign, use their
+Arbitrum One). When another person must sign, use their
 keystore if it is on this machine, else hand the user the exact command for
 them, in cast form so they need no Chainwall profile:
 `cast send REGISTRY "approveAction(bytes32)" ID --account NAME --rpc-url RPC`.
@@ -65,8 +65,8 @@ after `eta` with `timelock execute-action`.
 
 ## Delays
 
-DELAY is 86400 seconds unless the user asks for another value (a rehearsal on
-Sepolia may use 60). POLICY is the 32-byte zero word unless the setup names an
+DELAY is 86400 seconds unless the user asks for another value (a rehearsal
+may use 60). POLICY is the 32-byte zero word unless the setup names an
 approval policy. Never type a category id; compute it from the full name:
 
 ```sh

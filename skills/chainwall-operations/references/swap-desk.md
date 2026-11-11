@@ -1,10 +1,9 @@
 # Setup: swap desk (Uniswap v3, bounded output, vault as recipient)
 
 Read `../SKILL.md` first. Shared mechanics (signer, profile, instance deploy or
-reuse, terms, Sepolia test mode, resume) are the ones in
+reuse, terms, resume) are the ones in
 [usdc-aave-vault.md](usdc-aave-vault.md), followed by section name; this setup
-does not need that vault. Use the active profile or the one the user names (on Sepolia any profile with
-chain 11155111 and the Sepolia factory), and write `swap-desk-record.md`. Take
+does not need that vault. Use the active profile or the one the user names, and write `swap-desk-record.md`. Take
 flags from `chainwall <command> --help`.
 
 ## Outcome
@@ -28,20 +27,17 @@ tuple-argument calls and a two-argument policy.
 - The recipient is a literal (`{{vault}}`), so swap output can only land in the
   account. Approve is for the exact amount, right before the swap, in the same
   atomic script.
-- The account needs WETH or USDC to swap. On Sepolia, wrap faucet ETH with
-  the WETH `deposit` interaction from [eth-treasury.md](eth-treasury.md), or
-  send WETH to the account.
+- The account needs WETH or USDC to swap; the user sends it to the account.
 
 ## Inputs
 
-From [setup.json](../assets/swap-desk/setup.json), network block by chain.
+From [setup.json](../assets/swap-desk/setup.json) (Arbitrum One).
 Verify on chain and stop on any mismatch:
 
 - SwapRouter02: `factory()` and `WETH9()` return the listed values. Arbitrum
-  One `0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45`; Sepolia
-  `0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E`.
-- WETH and USDC: `symbol()`; on Sepolia USDC is Circle's test USDC
-  `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` (not Aave's).
+  One `0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45`.
+- WETH `0x82aF49447D8a07e3bd95BD0d56f35241523fBab1` and USDC
+  `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`: `symbol()` and `decimals()`.
 - Pool: `getPool(USDC, WETH, 500)` on the factory is nonzero and
   `liquidity()` > 0.
 
@@ -80,8 +76,7 @@ Expected selectors: `0x095ea7b3` then `0x04e45aaf` for both.
 5. Fill, compile, analyze, show results.
 6. Publish the program, then both interactions with `--id`.
 7. Grant `cap.registry.interaction.execute` to the group.
-8. Fund the account with the input token (Sepolia: wrap 0.005 test ETH to WETH
-   with the owner and send it, or use eth-treasury's wrap).
+8. Fund the account with the input token: the user sends WETH or USDC to it.
 9. Delays, only after the verify file has passed (a mistake found later
    takes 24 hours to fix): the vault setup's step 9 (skip only if the user says more setups
    will be added to this instance).

@@ -16,12 +16,9 @@ timelocked rule change.
 
 ## Network
 
-The network is the one the vault was built on. On Sepolia test mode, take
-USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
-[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
-every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
-as the vault setup's Network section says. Test USDC comes from the Aave
-faucet there, not from the user.
+Arbitrum One (chain `42161`), the network the vault is on. USDC, Pool,
+factory, RPC and balance floors are the ones in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json).
 
 ## Prerequisites
 
@@ -109,7 +106,7 @@ yes once: before step 3's send. Never print keys or passwords.
 
 ## Finish
 
-Append to the vault's record file (`usdc-vault-record.md`, on Sepolia
-`usdc-vault-sepolia-record.md`; create it if missing): old and new program hash, `actionId`, `eta`,
+Append to the vault's record file (`usdc-vault-record.md`; create it if
+missing): old and new program hash, `actionId`, `eta`,
 `expiresAt`, every transaction hash, the three simulation results, and whether
 the change was executed or cancelled.

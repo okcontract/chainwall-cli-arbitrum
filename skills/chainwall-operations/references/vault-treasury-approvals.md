@@ -17,12 +17,9 @@ owner alone can no longer pay anyone; until step 8 runs it still can.
 
 ## Network
 
-The network is the one the vault was built on. On Sepolia test mode, take
-USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
-[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
-every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
-as the vault setup's Network section says. Test USDC comes from the Aave
-faucet there, not from the user.
+Arbitrum One (chain `42161`), the network the vault is on. USDC, Pool,
+factory, RPC and balance floors are the ones in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json).
 
 ## Prerequisites
 
@@ -54,7 +51,7 @@ Ask the user for:
 - Two approver addresses, APPROVER2 and APPROVER3, with their Foundry keystore
   names if they sign on this machine (otherwise they approve from their own
   machines with `chainwall operations approve OPID --account NAME`). Each needs
-  about 0.0002 ETH on Arbitrum One (0.002 on Sepolia) for approval transactions.
+  about 0.0002 ETH on Arbitrum One for approval transactions.
 - Two recipient addresses with a short lowercase label each, for example
   `payroll` and `vendor`.
 
@@ -128,8 +125,8 @@ vault-treasury-approvals-verify.md, and before step 8.
 
 ## Finish
 
-Append to the vault's record file (`usdc-vault-record.md`, on Sepolia
-`usdc-vault-sepolia-record.md`; create it if missing): group members, policy and interaction ids,
+Append to the vault's record file (`usdc-vault-record.md`; create it if
+missing): group members, policy and interaction ids,
 recipients, caps, meter id, every transaction hash, and the approval sequence
 of the test payout. State: payouts go only to the two listed addresses, need
 two of three approvals, and are limited to 1000 USDC each and 5000 USDC per

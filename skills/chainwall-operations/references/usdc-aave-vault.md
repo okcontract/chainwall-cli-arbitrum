@@ -1,4 +1,4 @@
-# Setup: guarded USDC vault on Arbitrum One (Aave v3), with a free Sepolia test mode
+# Setup: guarded USDC vault on Arbitrum One (Aave v3)
 
 Read `../SKILL.md` first. Its rules on profiles, dry runs, signing and
 "never invent a command, selector or address" apply throughout this setup.
@@ -25,8 +25,7 @@ short opening message in plain words that fits what is actually left:
   Foundry's `cast` and the Chainwall CLI; one Foundry keystore for the owner;
   ETH on Arbitrum One for gas (about 0.002 ETH for a fresh deploy, much less
   when the instance exists); 5 USDC on Arbitrum One for the final test (not
-  needed if Resume shows the real run already happened). On Sepolia: only free
-  Sepolia test ETH from a faucet; the test USDC is minted for them.
+  needed if Resume shows the real run already happened).
 - What they will do themselves, only the parts still needed: pick the keystore
   (if there are several); give the keystore password once so the agent can
   sign (or choose Touch ID or scripts instead); say yes to the terms (if not yet accepted) and to the real supply (if
@@ -58,67 +57,22 @@ already in this setup or on chain.
 
 ## Network
 
-Arbitrum One is the default and the only network with real money. If the
-user's request names Sepolia (or "testnet"), use the free Ethereum Sepolia test
-network instead: take every chain value below from `networks.sepolia` in
-setup.json, and wherever this setup says Arbitrum One, 42161, ETH or USDC,
-read the Sepolia equivalent (Sepolia test ETH; Aave's Sepolia test USDC). Say
-which network you are using in the opening message. Never mix the two: every
-command in one run uses the same chain, RPC and addresses.
+Arbitrum One only (chain `42161`). Every command in a run uses that chain, its
+RPC and the addresses under Inputs. If the profile points at another chain,
+stop and say so.
 
-Sepolia differences, all of them:
-
-- Profile: use a dedicated profile named `usdc-vault-sepolia`. If
-  `chainwall profile list` does not have it, create it with
-  `chainwall profile create usdc-vault-sepolia`, then set four keys on it with
-  `chainwall --profile usdc-vault-sepolia config set KEY VALUE`: `chain`
-  `11155111`, `rpc_url` (`networks.sepolia.defaultRpc`), `factory`
-  (`networks.sepolia.okFactory`) and `account` (the keystore name). Pass
-  `--profile usdc-vault-sepolia` on every `chainwall` command; in zsh a function
-  is the reliable shortcut: `cw() { chainwall --profile usdc-vault-sepolia "$@"; }`
-  (a variable such as `P="chainwall --profile …"; $P …` fails with "command
-  not found").
-- RPC: the deploy needs an RPC that allows very large gas estimates (stage 1
-  estimates about 73M gas, gas limit about 88M). Use
-  `networks.sepolia.defaultRpc` (Tenderly's public gateway). Some public RPCs,
-  such as publicnode, reject it: `deploy --estimate` prints "The RPC rejected a
-  read" and a send fails with a bare `TransactionFailed`. Before the first
-  deploy send, run `deploy … --estimate --from OWNER`; it must print
-  `"balanceSufficient": true`. If the RPC rejects it, switch `rpc_url` to
-  another Sepolia RPC that passes this estimate before anything is sent (set
-  `rpc.11155111` as well as `rpc_url`, see SKILL.md). This is the one
-  case where the setup creates a profile; it never changes the active profile.
-- Factory: the CLI bundles no Sepolia factory (`deploy` fails with
-  `FactoryRequired` otherwise); the profile's `factory` key supplies it.
-- Gas: Sepolia ETH is free from public faucets. Use only
-  `networks.sepolia.minSignerBalanceWei` (0.1 ETH to deploy, 0.002 ETH when
-  the instance exists); the ETH figures in Signer are Arbitrum One. If the
-  owner has less, tell the user to get about 0.15
-  Sepolia ETH from a Sepolia faucet for the owner address and wait. A fresh
-  Sepolia deploy uses far more gas than Arbitrum (about 180M across the three
-  stages) but costs almost nothing at Sepolia prices.
-- USDC: Aave on Sepolia accepts only its own test USDC
-  (`networks.sepolia.usdc`), not Circle's Sepolia USDC. The catalog still names
-  it `circle/usdc`, so every script, id and policy is identical across networks.
-- Aave supply is currently blocked on Sepolia: the test USDC reserve is over
-  its supply cap, so `Pool.supply` reverts with Aave error `51` (confirm with
-  `cast call POOL "supply(address,uint256,address,uint16)" USDC 1000000 VAULT 0 --from VAULT`).
-  While that holds, every real supply, and every check that needs an Aave
-  position, is recorded as "blocked on Sepolia (Aave 51)" with that evidence,
-  and the run continues with the checks that need no position. Payouts and
-  everything else work.
-- Record file: `usdc-vault-sepolia-record.md`; setups that extend this vault
-  append to that same file (create it if missing).
-- Funding the vault (usdc-aave-vault-verify.md check 4): instead of asking the user to send
-  USDC, mint 5 test USDC straight to the vault with the open Aave faucet:
-  `cast send FAUCET "mint(address,address,uint256)" USDC VAULT 5000000 --account NAME --rpc-url RPC`
-  (dry-run first with `cast call ... --from OWNER`). It is free and moves none
-  of the user's funds.
+- RPC: the one in the profile, else `https://arb1.arbitrum.io/rpc`. Before the
+  first deploy send, run `deploy … --estimate --from OWNER`; it must print
+  `"balanceSufficient": true`. If the RPC rejects the estimate ("The RPC
+  rejected a read"), switch to another Arbitrum One RPC that passes it before
+  anything is sent (set `rpc.42161` as well as `rpc_url`, see SKILL.md).
+- Factory: bundled with the CLI for Arbitrum One; nothing to configure.
+- Record file: `usdc-vault-record.md`; setups that extend this vault append
+  to that same file (create it if missing).
 
 ## Inputs
 
-Fixed values are in [setup.json](../assets/usdc-aave-vault/setup.json) (Arbitrum One shown here; for
-Sepolia use `networks.sepolia`). Verify each on chain before use and stop on
+Fixed values are in [setup.json](../assets/usdc-aave-vault/setup.json). Verify each on chain before use and stop on
 any mismatch:
 
 - Chain 42161. RPC: the one in the profile, else `https://arb1.arbitrum.io/rpc`.
@@ -146,8 +100,7 @@ offer the keystore named by the profile's `account` key first.
 Ask for the keystore password once. The agent's shell cannot answer a password
 prompt, and a fresh run has about 32 signatures (3 deploy stages, terms, user,
 group and member, policy, vault, 2 orgs, 2 contracts, token, program, 3
-interactions, capability, 9 delays, propose, execute; plus the faucet mint on
-Sepolia). So, right after the opening message and before any write, ask:
+interactions, capability, 10 delays, propose, execute). So, right after the opening message and before any write, ask:
 
 > "To sign the setup transactions without prompting you about 32 times, I need
 > the password of your `NAME` keystore once. I keep it only in a private
@@ -212,7 +165,7 @@ Without a password or Touch ID, read the owner address by asking the user to
 run `cast wallet address --account NAME` in their own terminal and paste the
 address. Do not infer the owner from the Registry or old logs.
 
-The signer needs ETH on the network for about 20 transactions (Sepolia limits: `networks.sepolia.minSignerBalanceWei`; the figures below are Arbitrum One). Read its
+The signer needs ETH on the network for about 30 transactions. Read its
 balance with `cast balance OWNER --rpc-url RPC`. Stop below 0.0015 ETH when the
 instance still has to be deployed; when it already exists, the remaining
 writes are at most about 2M gas in total (step 9 alone is about 117k gas per
@@ -227,9 +180,9 @@ and `--gas-price`, then bind the instance with `chainwall login ADDRESS`.
 
 ## Profile
 
-On Arbitrum One, use the active Chainwall profile (`chainwall config show`).
+Use the active Chainwall profile (`chainwall config show`).
 Set `chain 42161` and the RPC on it if they are missing. Do not create or
-switch profiles. (On Sepolia, see Network.) If the profile already binds an
+switch profiles. If the profile already binds an
 instance on the network's chain, step 1 reuses it; otherwise step 1 deploys and
 `deploy` binds the new instance to this profile.
 
@@ -457,7 +410,7 @@ Follow [usdc-aave-vault-verify.md](usdc-aave-vault-verify.md). No local fork or 
 
 ## Finish
 
-Write `usdc-vault-record.md` (`usdc-vault-sepolia-record.md` on Sepolia, stating at the top that it is a test network with no real value): chain ID, every address, `chainwall --version`,
+Write `usdc-vault-record.md`: chain ID, every address, `chainwall --version`,
 every transaction hash, and the configuration read back from chain (users,
 group, policy, catalog, interactions, timelock delays, and any inert
 bare-suffix category configs found in Resume). Add a table of what the vault

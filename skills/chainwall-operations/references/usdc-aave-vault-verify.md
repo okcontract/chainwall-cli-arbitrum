@@ -95,8 +95,7 @@ current balances for information only.
 Otherwise:
 
 1. Arbitrum One: tell the user: "Send 5 USDC on Arbitrum One to VAULT, then
-   tell me when it's sent." Do not move the user's funds yourself. Sepolia:
-   mint 5 test USDC to VAULT with the Aave faucet instead (SKILL.md, Network). Confirm with
+   tell me when it's sent." Do not move the user's funds yourself. Confirm with
    `chainwall accounts assets VAULT` that the USDC arrived.
 2. Propose: `operations propose` a `usdc-vault-supply` with args `["1000000"]`,
    `safe` = VAULT, `policyId` = POLICY, `deadline` = now + 86400,

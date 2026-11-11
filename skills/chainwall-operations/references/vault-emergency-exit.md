@@ -16,12 +16,9 @@ then pause.
 
 ## Network
 
-The network is the one the vault was built on. On Sepolia test mode, take
-USDC, Pool, factory, RPC and balance floors from `networks.sepolia` in
-[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json) and read
-every "Arbitrum One" and ETH figure below as its Sepolia equivalent, exactly
-as the vault setup's Network section says. Test USDC comes from the Aave
-faucet there, not from the user.
+Arbitrum One (chain `42161`), the network the vault is on. USDC, Pool,
+factory, RPC and balance floors are the ones in
+[usdc-aave-vault setup.json](../assets/usdc-aave-vault/setup.json).
 
 ## Prerequisites
 
@@ -55,8 +52,7 @@ USDC.
 
 Read the aToken yourself: field 9 (`aTokenAddress`) of
 `cast call POOL "getReserveData(address)((uint256,uint128,uint128,uint128,uint128,uint128,uint40,uint16,address,address,address,address,uint128,uint128,uint128))" USDC`. Arbitrum One
-`0x724dc807b04555b71ed48a6896b6F41593b8C637` (aArbUSDCn); Sepolia test mode
-`0x16dA4541aD1807f4443d92D26044C1147406EB80`. Check `UNDERLYING_ASSET_ADDRESS()`
+`0x724dc807b04555b71ed48a6896b6F41593b8C637` (aArbUSDCn). Check `UNDERLYING_ASSET_ADDRESS()`
 on it returns USDC. Stop on any mismatch.
 
 ## Mechanics the user should hear first
@@ -126,8 +122,8 @@ user's yes before step 4 and before any real exit or pause in vault-emergency-ex
 
 ## Finish
 
-Append to the vault's record file (`usdc-vault-record.md`, on Sepolia
-`usdc-vault-sepolia-record.md`; create it if missing): COLD, policy and interaction ids, guardian
+Append to the vault's record file (`usdc-vault-record.md`; create it if
+missing): COLD, policy and interaction ids, guardian
 group if any, every transaction hash, and the drill results. State in plain
 words: exit moves everything to COLD and needs only the owner; pause stops
 everything and only the owner can unpause.

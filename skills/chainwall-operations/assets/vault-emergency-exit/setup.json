@@ -27,8 +27,7 @@
       "decimals": 6,
       "source": "getReserveData(USDC).aTokenAddress",
       "networks": {
-        "42161": "0x724dc807b04555b71ed48a6896b6F41593b8C637",
-        "11155111": "0x16dA4541aD1807f4443d92D26044C1147406EB80"
+        "42161": "0x724dc807b04555b71ed48a6896b6F41593b8C637"
       }
     }
   },

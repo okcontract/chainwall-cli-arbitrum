@@ -1,10 +1,9 @@
 # Setup: token issuer (mint, burn, pause behind Chainwall)
 
 Read `../SKILL.md` first. Shared mechanics (signer, profile, instance deploy or
-reuse, terms, Sepolia test mode, resume) are the ones in
+reuse, terms, resume) are the ones in
 [usdc-aave-vault.md](usdc-aave-vault.md), followed by section name; this setup
-does not need that vault. Use the active profile or the one the user names (on Sepolia any profile with
-chain 11155111 and the Sepolia factory), and write `token-issuer-record.md`. Take
+does not need that vault. Use the active profile or the one the user names, and write `token-issuer-record.md`. Take
 flags from `chainwall <command> --help`.
 
 ## Outcome

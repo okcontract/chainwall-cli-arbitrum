@@ -7,7 +7,7 @@
 2. Not a member. `cast call INTERACT "executeFromAccount(uint256,bytes32,uint256[],uint256)" 999999 BOT_SUPPLY_ID "[1000000]" 100000 --from 0x000000000000000000000000000000000000dEaD --rpc-url RPC`
    → revert "caller is not a user".
 3. Real bot run (write, user's yes first). Read `accounts assets VAULT` first; if the
-   vault holds less than 1 USDC, ask the user to send 2 USDC to it and wait (Sepolia: mint 5 from the faucet as the vault setup says; if Aave supply is blocked there, record checks 3 and 4 as blocked and go to 5). As the bot: `operations propose` for
+   vault holds less than 1 USDC, ask the user to send 2 USDC to it and wait. As the bot: `operations propose` for
    `usdc-vault-bot-supply`, args `["1000000"]`, safe VAULT, policyId the bot
    policy, deadline now + 86400, `--account BOT --out bot-supply.json`; then
    `operations execute bot-supply.json --via account --account BOT`. Read the
@@ -19,9 +19,7 @@
    source-verified and bucket-read only.
 5. Kill switch (write). Owner: `roles pause`. Then the bot's
    `operations simulate bot-supply.json --via account --account BOT` fails
-   (`EnforcedPause`). Owner: `roles unpause`; the simulation no longer fails
-   with `EnforcedPause` (it passes, or on Sepolia fails only at the Aave call
-   with `ERR_04`). Record both hashes.
+   (`EnforcedPause`). Owner: `roles unpause`; the simulation passes again. Record both hashes.
 6. Bot cannot change rules: `cast call REGISTRY "setPolicyProgram(bytes32,bytes,uint32)" POLICY 0x00 1 --from BOT --rpc-url RPC`
    → revert (not admin, no policy capability).
 
