@@ -1,0 +1,33 @@
+{
+  "setup": "swap-desk",
+  "standalone": true,
+  "group": "swap-desk-traders",
+  "policy": {
+    "name": "swap-desk-policy",
+    "criteria": [
+      "swap-desk-traders"
+    ],
+    "thresholds": [
+      1
+    ],
+    "program": "policy.ls"
+  },
+  "accountSalt": "swap-desk v1",
+  "interactions": {
+    "swap-desk-weth-to-usdc": "weth-to-usdc.ls",
+    "swap-desk-usdc-to-weth": "usdc-to-weth.ls"
+  },
+  "fee": 500,
+  "capWethIn": "10000000000000000",
+  "capUsdcIn": "100000000",
+  "networks": {
+    "arbitrum-one": {
+      "chainId": 42161,
+      "router": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+      "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+      "weth": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "pool500": "0xC6962004f452bE9203591991D15f6b388e09E8D0"
+    }
+  }
+}

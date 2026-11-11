@@ -1,0 +1,6 @@
+[
+  {"type":"function","name":"owner","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"address"}]},
+  {"type":"function","name":"setFee","stateMutability":"nonpayable","inputs":[{"name":"bps","type":"uint256"}],"outputs":[]},
+  {"type":"function","name":"setOracle","stateMutability":"nonpayable","inputs":[{"name":"o","type":"address"}],"outputs":[]},
+  {"type":"function","name":"transferOwnership","stateMutability":"nonpayable","inputs":[{"name":"to","type":"address"}],"outputs":[]}
+]

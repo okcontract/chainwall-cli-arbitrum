@@ -1,0 +1,100 @@
+{
+  "setup": "usdc-aave-vault",
+  "chainId": 42161,
+  "defaultRpc": "https://arb1.arbitrum.io/rpc",
+  "okFactory": "0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b",
+  "tokens": {
+    "circle/usdc": {
+      "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "symbol": "USDC",
+      "decimals": 6,
+      "abi": "erc20.json"
+    }
+  },
+  "contracts": {
+    "aave/pool-v3": {
+      "address": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "verify": "getPool() on PoolAddressesProvider 0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb",
+      "abi": "pool.json"
+    }
+  },
+  "group": "usdc-vault-approvers",
+  "policy": {
+    "name": "usdc-vault-policy",
+    "criteria": [
+      "usdc-vault-approvers"
+    ],
+    "thresholds": [
+      1
+    ],
+    "program": "policy.ls"
+  },
+  "interactions": {
+    "usdc-vault-supply": "supply.ls",
+    "usdc-vault-withdraw": "withdraw.ls",
+    "usdc-vault-payout": "payout.ls"
+  },
+  "perOperationCapBaseUnits": "100000000",
+  "timelockDelaySeconds": 86400,
+  "timelockCategories": [
+    "timelock.category.policy",
+    "timelock.category.contract",
+    "timelock.category.token",
+    "timelock.category.interaction",
+    "timelock.category.activation",
+    "timelock.category.capability",
+    "timelock.category.group",
+    "timelock.category.role.admin",
+    "timelock.category.diamond",
+    "timelock.category.config"
+  ],
+  "deploySalt": "usdc-aave-vault v1",
+  "minSignerBalanceWei": {
+    "deploying": "1500000000000000",
+    "instanceExists": "200000000000000"
+  },
+  "accountSalt": "usdc-aave-vault v1",
+  "timelockConfig": {
+    "minDelay": 86400,
+    "maxDelay": 86400,
+    "defaultDelay": 86400,
+    "gracePeriod": 604800,
+    "defaultPolicyId": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "executeCapabilityGrantee": "group:usdc-vault-approvers",
+  "timelockCategoryIdRule": "category id = chainwall id <full name as listed>, e.g. chainwall id timelock.category.policy; never hash the bare suffix",
+  "interactionPublish": {
+    "usdc-vault-supply": "interactions add supply.ls --id usdc-vault-supply",
+    "usdc-vault-withdraw": "interactions add withdraw.ls --id usdc-vault-withdraw",
+    "usdc-vault-payout": "interactions add payout.ls --id usdc-vault-payout"
+  },
+  "tokenRecord": {
+    "org": "circle",
+    "id": "usdc",
+    "symbol": "USDC",
+    "decimals": 6,
+    "price": "0x0000000000000000000000000000000000000000",
+    "priceFeedDecimals": 0,
+    "requires": "contract version circle/usdc first"
+  },
+  "proposalDeadlineSeconds": 86400,
+  "networks": {
+    "arbitrum-one": {
+      "default": true,
+      "chainId": 42161,
+      "chainName": "arbitrum",
+      "defaultRpc": "https://arb1.arbitrum.io/rpc",
+      "okFactory": "0x20d2eD7f3d008a70b2aED91CC7F9801Ff14b449b",
+      "factoryBundled": true,
+      "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "aavePool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "aavePoolAddressesProvider": "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb",
+      "minSignerBalanceWei": {
+        "deploying": "1500000000000000",
+        "instanceExists": "200000000000000"
+      },
+      "funding": "user sends 5 USDC on Arbitrum One to the vault"
+    }
+  },
+  "note": "Arbitrum One only (chain 42161)."
+}

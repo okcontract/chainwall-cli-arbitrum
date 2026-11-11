@@ -70,6 +70,15 @@ reverts, and broadcasts nothing. Correct a rejected policy or authorization;
 do not weaken it simply to make simulation pass. State changes between
 simulation and execution can invalidate the result.
 
+A raw revert starting `0x80cf34d4` is the script engine's `FailWord(bytes6)`;
+the next six bytes are an ASCII tag. `ERR_01` is a failed `$require` (the
+policy or interaction rejected the context), `ERR_02` a registry lookup or
+allowlist failure (the target or interaction is not registered, not in a
+policy, or unavailable), `ERR_04` a failed external call (the target contract
+itself reverted, so check that call directly, for example with `cast call
+--from VAULT`), `ERR_09` the native value cap exceeded, `ERR_03` work limit
+exceeded, `ERR_00` short return data, `ERR_05` to `ERR_08` malformed bytecode.
+
 After submission, inspect the receipt, execution event and intended state
 change, such as recipient and vault balances. Use a fresh read for final
 verification. An operation becoming `closed` alone is insufficient evidence:
@@ -80,6 +89,21 @@ that predicate also covers withdrawal and missing records.
 Choose the existing Safe's supported route. `safes inspect` reports owners,
 threshold, guard/gateway and module state. Safe owner signatures and Interact
 policy approvals satisfy different checks.
+
+The actor signature (`sign-actor`) is checked with OpenZeppelin
+SignatureChecker: when the actor address has code it calls ERC-1271
+`isValidSignature` and never tries ecrecover. An EOA with an EIP-7702
+delegation has code (`cast code ACTOR` returns `0xef0100…`), and if the
+delegate does not implement `isValidSignature` every actor signature fails
+with `InvalidActorSignature`, which the Safe surfaces as `GS013`. Before the
+first Safe execution read `cast code ACTOR`: it must be `0x`, or the delegate
+must answer `isValidSignature`. If not, use another registered user with
+execute rights as the actor. Account-mode execution (`--via account`) uses
+the caller directly and is not affected.
+
+Safe revert strings: `GS020` signatures too short (fewer than threshold),
+`GS026` signer not an owner or signatures out of order, `GS013` the inner
+Interact call reverted (trace it: a policy, actor or target failure).
 
 For the owner-signed route:
 
