@@ -515,8 +515,6 @@ Supported chain names:
 | `bsc` | 56 |
 | `avalanche` | 43114 |
 | `gnosis` | 100 |
-| `sepolia` | 11155111 |
-| `base-sepolia` | 84532 |
 | `anvil`, `localhost` | 31337 |
 
 Other chains use a numeric chain ID from 1 through 9,007,199,254,740,991, matching
@@ -1706,7 +1704,7 @@ chainwall tokens get-native-usd-feed-config
 chainwall tokens get-oracle-environment
 ```
 
-The selected chain determines the preset. Ethereum, Sepolia, Base, Optimism, and
+The selected chain determines the preset. Ethereum, Base, Optimism, and
 Arbitrum currently have reviewed presets; unsupported chains are rejected. Use
 the profile's Registry and RPC, or override them with `--instance` and `--rpc-url`.
 
