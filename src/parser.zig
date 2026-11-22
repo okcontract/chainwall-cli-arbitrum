@@ -329,8 +329,7 @@ pub const Parser = struct {
             _ = try p.take(";");
         }
         if (mains.items.len == 0) {
-            if (bindings.items.len == 0) return error.Syntax;
-            const binding = bindings.items[bindings.items.len - 1];
+            const binding = bindings.last() orelse return error.Syntax;
             const result = try p.f.named(.variable, binding.name, &.{});
             result.spelling = binding.spelling;
             try mains.append(p.f.a, result);
