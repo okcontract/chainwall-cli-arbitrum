@@ -174,17 +174,25 @@ pub const Server = struct {
     pub fn run(s: *Server) !u8 {
         var buffer: [8192]u8 = undefined;
         var reader = std.Io.File.stdin().readerStreaming(s.io, &buffer);
-        const Event = union(enum) { input: anyerror!?[]const u8, tick: anyerror!void };
+        const Event = union(enum) {
+            input: anyerror!?[]const u8,
+            tick: anyerror!void,
+
+            fn deinit(event: @This()) void {
+                switch (event) {
+                    .input => |result| if (result catch null) |body| std.heap.page_allocator.free(body),
+                    .tick => {},
+                }
+            }
+        };
         var events: [3]Event = undefined;
         var select = std.Io.Select(Event).init(s.io, &events);
-        defer while (select.cancel()) |event| switch (event) {
-            .input => |result| if (result catch null) |body| std.heap.page_allocator.free(body),
-            .tick => {},
-        };
+        defer while (select.cancel()) |event| event.deinit();
         try select.concurrent(.input, readInput, .{&reader.interface});
         var ticking = false;
         while (s.exit_code == null) {
             const event = try select.await();
+            defer event.deinit();
             if (event == .tick) {
                 try event.tick;
                 ticking = false;
@@ -196,7 +204,6 @@ pub const Server = struct {
             }
             if (event == .input) {
                 const body = (try event.input) orelse break;
-                defer std.heap.page_allocator.free(body);
                 try select.concurrent(.input, readInput, .{&reader.interface});
                 var arena = std.heap.ArenaAllocator.init(s.a);
                 defer arena.deinit();
