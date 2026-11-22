@@ -9,8 +9,10 @@ pub fn trim(s: []const u8) []const u8 {
     return std.mem.trim(u8, s, " \t\r\n");
 }
 
-pub fn parse(a: A, source: []const u8) !Value {
-    return (try std.json.parseFromSlice(Value, a, source, .{ .allocate = .alloc_always, .parse_numbers = false })).value;
+/// Parsed values own their strings in the caller's arena, which also owns
+/// intermediate allocations from a failed parse.
+pub fn parse(arena: A, source: []const u8) !Value {
+    return std.json.parseFromSliceLeaky(Value, arena, source, .{ .allocate = .alloc_always, .parse_numbers = false });
 }
 pub fn encode(a: A, value: anytype) ![]const u8 {
     return std.json.Stringify.valueAlloc(a, value, .{ .whitespace = .indent_2, .emit_null_optional_fields = false });

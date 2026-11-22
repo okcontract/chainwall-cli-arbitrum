@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("common.zig");
 const abi = @import("abi_codec.zig");
+const max_reply_bytes = 2 * 1024 * 1024;
 
 pub const Options = struct {
     app_url: ?[]const u8 = null,
@@ -108,28 +109,42 @@ const Session = struct {
                 try req.respond(s.payload, .{ .keep_alive = false, .extra_headers = &headers });
                 continue;
             }
-            if (req.head.method != .POST or !c.eq(u8, req.head.content_type orelse "", "application/json") or (req.head.content_length orelse std.math.maxInt(u64)) > 2 * 1024 * 1024) {
+            if (req.head.method != .POST or !c.eq(u8, req.head.content_type orelse "", "application/json") or (req.head.content_length orelse std.math.maxInt(u64)) > max_reply_bytes) {
                 try req.respond("{}", .{ .status = .bad_request, .keep_alive = false, .extra_headers = &headers });
                 continue;
             }
             var body_buffer: [4096]u8 = undefined;
             const body_reader = try req.readerExpectContinue(&body_buffer);
-            const body = try body_reader.allocRemaining(s.a, .limited(2 * 1024 * 1024));
-            const result = c.parse(s.a, body) catch {
+            const reply = (try readReply(s.a, body_reader)) orelse {
                 try req.respond("{}", .{ .status = .bad_request, .keep_alive = false, .extra_headers = &headers });
                 continue;
             };
-            if (c.field(result, "result") == null and c.field(result, "error") == null) {
-                try req.respond("{}", .{ .status = .bad_request, .keep_alive = false, .extra_headers = &headers });
-                continue;
-            }
             try req.respond("{\"received\":true}", .{ .keep_alive = false, .extra_headers = &headers });
-            if (c.field(result, "error")) |_| return error.BrowserApprovalRejected;
-            return c.field(result, "result").?;
+            return switch (reply) {
+                .accepted => |result| result,
+                .rejected => error.BrowserApprovalRejected,
+            };
         }
         return error.BrowserApprovalRequestLimit;
     }
 };
+
+const Reply = union(enum) { accepted: c.Value, rejected };
+
+/// Returns null for an invalid reply. Accepted values belong to the caller's arena.
+fn readReply(a: c.A, reader: *std.Io.Reader) !?Reply {
+    var attempt: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    defer attempt.deinit();
+    const scratch = attempt.allocator();
+    const body = try reader.allocRemaining(scratch, .limited(max_reply_bytes));
+    const message = c.parse(scratch, body) catch return null;
+    if (c.field(message, "error") != null) return .rejected;
+    if (c.field(message, "result") == null) return null;
+
+    // Reparse the validated body so the result survives the attempt arena.
+    const owned = try c.parse(a, body);
+    return .{ .accepted = c.field(owned, "result").? };
+}
 
 fn uniqueHeader(request_: *const std.http.Server.Request, name: []const u8) ?[]const u8 {
     var iterator = request_.iterateHeaders();
@@ -154,4 +169,23 @@ test "standalone approval URLs preserve the document and enforce the passkey ori
     try std.testing.expectError(error.InvalidApprovalUrl, approvalUrl(a, expected, .{ .page_url = "https://user@chainwall.example/page" }, 1234, "abc"));
     try std.testing.expectError(error.InsecureApprovalOrigin, approvalUrl(a, expected, .{ .page_url = "http://chainwall.example/page" }, 1234, "abc"));
     try std.testing.expectError(error.ConflictingApprovalUrls, approvalUrl(a, expected, .{ .page_url = expected, .app_url = expected }, 1234, "abc"));
+}
+
+test "invalid and rejected approvals require no result storage" {
+    var result_allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    const a = result_allocator.allocator();
+    for ([_][]const u8{ "{\"result\":\"pending\",\"other\":", "{}" }) |body| {
+        var reader = std.Io.Reader.fixed(body);
+        try std.testing.expect((try readReply(a, &reader)) == null);
+    }
+    var rejection = std.Io.Reader.fixed("{\"error\":\"declined\",\"result\":null}");
+    try std.testing.expect((try readReply(a, &rejection)).? == .rejected);
+    try std.testing.expect(!result_allocator.has_induced_failure);
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var approval = std.Io.Reader.fixed("{\"result\":{\"status\":\"approved\",\"number\":9007199254740993}}");
+    const result = (try readReply(arena.allocator(), &approval)).?.accepted;
+    try std.testing.expectEqualStrings("approved", try c.string(c.field(result, "status").?));
+    try std.testing.expectEqualStrings("9007199254740993", c.field(result, "number").?.number_string);
 }
