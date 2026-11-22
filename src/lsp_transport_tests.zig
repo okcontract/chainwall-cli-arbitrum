@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("cli/common.zig");
 const protocol = @import("lsp/protocol.zig");
 const binary = @import("executables").lsp;
+const release_version = @import("release_options").version;
 
 fn message(a: c.A, out: *std.Io.Writer, value: anytype) !void {
     const body = try c.encode(a, value);
@@ -79,7 +80,10 @@ test "LSP executable handles capabilities, editing requests, diagnostics and can
     try message(a, &input.writer, .{ .jsonrpc = "2.0", .method = "exit", .params = .{} });
     const messages = try exchange(a, dir, input.written(), 0);
     try std.testing.expectEqualStrings("-32002", try c.scalar(a, c.field(c.field(try response(messages, 0), "error").?, "code").?));
-    const capabilities = c.field(c.field(try response(messages, 1), "result").?, "capabilities").?;
+    const initialized = c.field(try response(messages, 1), "result").?;
+    const server_info = c.field(initialized, "serverInfo").?;
+    try std.testing.expectEqualStrings(release_version, try c.string(c.field(server_info, "version").?));
+    const capabilities = c.field(initialized, "capabilities").?;
     try std.testing.expect(c.field(capabilities, "signatureHelpProvider") != null);
     try std.testing.expect(c.field(capabilities, "diagnosticProvider") != null);
     const completion = c.field(try response(messages, 2), "result").?;

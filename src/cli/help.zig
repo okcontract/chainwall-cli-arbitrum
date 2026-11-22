@@ -1,4 +1,5 @@
 const std = @import("std");
+const release_version = @import("release_options").version;
 const c = @import("common.zig");
 const contracts = @import("contracts.zig");
 const sync = @import("sync.zig");
@@ -159,7 +160,7 @@ pub const Renderer = struct {
         try r.out.writer.writeByte('\n');
     }
     pub fn version(r: *Renderer) !void {
-        try r.brand("0.3.1 (Zig " ++ @import("builtin").zig_version_string ++ ")");
+        try r.brand(release_version ++ " (Zig " ++ @import("builtin").zig_version_string ++ ")");
     }
     fn width(rows: []const Row) usize {
         var result: usize = 0;

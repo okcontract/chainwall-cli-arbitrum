@@ -1,4 +1,5 @@
 const std = @import("std");
+const release_version = @import("release_options").version;
 const c = @import("common.zig");
 const Cast = @import("cast.zig").Cast;
 pub const tested_version = "1.8.6";
@@ -29,8 +30,8 @@ pub fn run(cast: *Cast) !c.Value {
     var checking = cast.*;
     checking.env = &env;
     defer cast.diagnostic = checking.diagnostic;
-    const version = probe(&checking) catch |err| return c.parse(cast.a, try c.encode(cast.a, .{ .schemaVersion = 1, .ok = false, .chainwall = "0.3.1", .zig = @import("builtin").zig_version_string, .cast = .{ .ok = false, .code = @errorName(err), .testedVersion = tested_version, .action = "Run foundryup --install 1.8.6, put cast on PATH, then rerun chainwall doctor. These checks use no wallet or RPC." } }));
-    return c.parse(cast.a, try c.encode(cast.a, .{ .schemaVersion = 1, .ok = true, .chainwall = "0.3.1", .zig = @import("builtin").zig_version_string, .cast = .{ .ok = true, .version = version, .testedVersion = tested_version, .testedRelease = std.mem.indexOf(u8, version, "Version: " ++ tested_version ++ "-") != null or std.mem.indexOf(u8, version, "Version: " ++ tested_version ++ "\n") != null, .checks = .{ "calldata", "decode-abi-json", "send-options", "wallet-sign-options" } } }));
+    const version = probe(&checking) catch |err| return c.parse(cast.a, try c.encode(cast.a, .{ .schemaVersion = 1, .ok = false, .chainwall = release_version, .zig = @import("builtin").zig_version_string, .cast = .{ .ok = false, .code = @errorName(err), .testedVersion = tested_version, .action = "Run foundryup --install 1.8.6, put cast on PATH, then rerun chainwall doctor. These checks use no wallet or RPC." } }));
+    return c.parse(cast.a, try c.encode(cast.a, .{ .schemaVersion = 1, .ok = true, .chainwall = release_version, .zig = @import("builtin").zig_version_string, .cast = .{ .ok = true, .version = version, .testedVersion = tested_version, .testedRelease = std.mem.indexOf(u8, version, "Version: " ++ tested_version ++ "-") != null or std.mem.indexOf(u8, version, "Version: " ++ tested_version ++ "\n") != null, .checks = .{ "calldata", "decode-abi-json", "send-options", "wallet-sign-options" } } }));
 }
 
 test "Foundry option checks require a complete option name" {

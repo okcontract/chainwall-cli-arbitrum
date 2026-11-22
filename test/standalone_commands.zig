@@ -1,4 +1,5 @@
 const std = @import("std");
+const release_version = @import("release_options").version;
 test "standalone command validation and help never wait for stdin" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -11,8 +12,8 @@ test "standalone command validation and help never wait for stdin" {
         .{ .args = &.{"--help"}, .code = 0, .expected = "Usage:" },
         .{ .args = &.{"-h"}, .code = 0, .expected = "Usage:" },
         .{ .args = &.{ "compile", "--help" }, .code = 0, .expected = "Usage:" },
-        .{ .args = &.{"--version"}, .code = 0, .expected = "miniscript 0.3.1" },
-        .{ .args = &.{"-V"}, .code = 0, .expected = "miniscript 0.3.1" },
+        .{ .args = &.{"--version"}, .code = 0, .expected = "miniscript " ++ release_version ++ "\n" },
+        .{ .args = &.{"-V"}, .code = 0, .expected = "miniscript " ++ release_version ++ "\n" },
     };
     for (cases) |case| {
         var child = try std.process.spawn(io, .{

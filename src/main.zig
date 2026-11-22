@@ -1,5 +1,6 @@
 const std = @import("std");
 const ms = @import("miniscript");
+const release_version = @import("release_options").version;
 const json = ms.json;
 const help =
     "Usage: miniscript <compile|decompile|disasm|assemble|json> [file|-]\n" ++
@@ -67,7 +68,7 @@ fn start(init: std.process.Init) !void {
         return;
     };
     if (std.mem.eql(u8, action, "--help") or std.mem.eql(u8, action, "-h")) return std.Io.File.stdout().writeStreamingAll(init.io, help);
-    if (std.mem.eql(u8, action, "--version") or std.mem.eql(u8, action, "-V")) return std.Io.File.stdout().writeStreamingAll(init.io, "miniscript 0.3.1\n");
+    if (std.mem.eql(u8, action, "--version") or std.mem.eql(u8, action, "-V")) return std.Io.File.stdout().writeStreamingAll(init.io, "miniscript " ++ release_version ++ "\n");
     var known = false;
     for ([_][]const u8{ "compile", "decompile", "disasm", "assemble", "json" }) |command| if (std.mem.eql(u8, action, command)) {
         known = true;
