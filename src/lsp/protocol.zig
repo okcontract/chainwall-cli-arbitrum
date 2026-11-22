@@ -48,10 +48,7 @@ pub fn read(a: c.A, reader: *std.Io.Reader) !?[]const u8 {
     }
     const n = length orelse return error.InvalidFrame;
     if (n == 0 or n > 2 * 1024 * 1024) return error.FrameTooLarge;
-    const body = try a.alloc(u8, n);
-    errdefer a.free(body);
-    try reader.readSliceAll(body);
-    return body;
+    return try reader.readAllocAll(a, n);
 }
 
 pub fn field(value: c.Value, name: []const u8) c.Value {
