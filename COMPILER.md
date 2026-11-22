@@ -22,7 +22,7 @@ LSP configuration: unknown keys are rejected. Supported keys are `optimization`,
 and `payableSelectors` are also validated and accepted for artifact compatibility;
 they do not change this compiler's explicit payable-call syntax.
 
-Native Zig 0.17 implementation of the onchain-compilable Lambdascript language,
+Native Zig 0.17.1 implementation of the onchain-compilable Lambdascript language,
 MiniScript bytecode generation, lossless assembly/disassembly, and source
 reconstruction. The library and executable depend only on Zig's standard
 library. Core compilation runs entirely in Zig without a runtime dependency or RPC.

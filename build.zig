@@ -45,7 +45,7 @@ pub fn build(b: *std.Build) void {
     }) });
     const smoke = b.addRunArtifact(smoke_tool);
     const install_prefix: std.Build.LazyPath = .{ .relative = .{ .base = .install_prefix, .sub_path = "" } };
-    smoke.addDirectoryArg(install_prefix);
+    smoke.addDirectoryArg2(install_prefix, .{});
     smoke.addArgs(&.{ if (build_cli) "cli" else "no-cli", if (build_lsp) "lsp" else "no-lsp" });
     smoke.step.dependOn(b.getInstallStep());
     b.step("smoke", "Check native installed binaries, documentation, skills and completions").dependOn(&smoke.step);
@@ -56,14 +56,17 @@ pub fn build(b: *std.Build) void {
     }) });
     const source_package = b.addRunArtifact(source_package_tool);
     source_package.addArg(b.graph.zig_exe);
-    source_package.addDirectoryArg(b.path("."));
+    source_package.addDirectoryArg2(b.path("."), .{});
     source_package.has_side_effects = true;
     b.step("test-package", "Fetch, extract and build the manifest-filtered source package").dependOn(&source_package.step);
     const archive_name = b.fmt("chainwall-{s}-{s}.tar.gz", .{ @import("build.zig.zon").version, target.result.zigTriple(b.allocator) catch @panic("OOM") });
     const archive = b.addSystemCommand(&.{ "tar", "-czf" });
-    const archive_path = archive.addOutputFileArg(archive_name);
+    // The directory argument tracks the path, so always archive the current install tree.
+    archive.has_side_effects = true;
+    const archive_path = archive.addOutputFileArg2(archive_name, .{});
     archive.addArg("-C");
-    archive.addDirectoryArg(install_prefix);
+    // Distinguish install trees when checkouts share a local cache.
+    archive.addDirectoryArg2(install_prefix, .{ .make_absolute = true });
     archive.addArgs(&.{ "bin", "share" });
     archive.step.dependOn(b.getInstallStep());
     const install_archive = b.addInstallFileWithDir(archive_path, .prefix, b.fmt("packages/{s}", .{archive_name}));
@@ -154,7 +157,7 @@ pub fn build(b: *std.Build) void {
             const editor_run = b.addRunArtifact(editor_smoke);
             editor_run.addArg(b.option([]const u8, "neovim", "Neovim executable for test-editor") orelse "nvim");
             editor_run.addFileArg(lsp.getEmittedBin());
-            editor_run.addDirectoryArg(b.path("editors/neovim"));
+            editor_run.addDirectoryArg2(b.path("editors/neovim"), .{});
             b.step("test-editor", "Test the native Neovim integration with the real LSP").dependOn(&editor_run.step);
             const run_lsp = b.addRunArtifact(lsp);
             run_lsp.addPassthruArgs();
