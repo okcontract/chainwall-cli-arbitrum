@@ -77,10 +77,12 @@ fn start(init: std.process.Init) !void {
     const path = args.next();
     if (args.next() != null) return error.InvalidArguments;
     if (path) |value| if (std.mem.eql(u8, value, "--help") or std.mem.eql(u8, value, "-h")) return std.Io.File.stdout().writeStreamingAll(init.io, help);
-    const input = if (path != null and !std.mem.eql(u8, path.?, "-")) try std.Io.Dir.cwd().readFileAlloc(init.io, path.?, a, .limited(64 * 1024 * 1024)) else blk: {
+    const max_input_bytes = 64 * 1024 * 1024;
+    // File reads use an exclusive limit.
+    const input = if (path != null and !std.mem.eql(u8, path.?, "-")) try std.Io.Dir.cwd().readFileAlloc(init.io, path.?, a, .limited(max_input_bytes + 1)) else blk: {
         var buffer: [4096]u8 = undefined;
         var reader = std.Io.File.stdin().readerStreaming(init.io, &buffer);
-        break :blk try reader.interface.allocRemaining(a, .limited(64 * 1024 * 1024));
+        break :blk try reader.interface.allocRemaining(a, .limited(max_input_bytes));
     };
     const output = if (std.mem.eql(u8, action, "json")) blk: {
         const parsed = try std.json.parseFromSlice(std.json.Value, a, input, .{ .allocate = .alloc_always });
