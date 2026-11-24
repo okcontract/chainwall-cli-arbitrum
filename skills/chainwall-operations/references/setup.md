@@ -5,7 +5,7 @@ users need Foundry's `cast` on PATH for wallet handling and transaction commands
 The Safe owner-signature example also uses `jq` to collect JSON signature files.
 Check `chainwall --version` and command help before following a workflow.
 
-For a source checkout, read the root `README.md`, then build with Zig 0.17.0:
+For a source checkout, read the root `README.md`, then build with Zig 0.17.1:
 
 ```sh
 zig build -Doptimize=safe

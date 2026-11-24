@@ -3,6 +3,9 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const release_version = @import("build.zig.zon").version;
+    const release_options = b.addOptions();
+    release_options.addOption([]const u8, "version", release_version);
     const test_step = b.step("test", "Run standalone library and parity fixture tests");
     const module = b.addModule("miniscript", .{
         .root_source_file = b.path("src/root.zig"),
@@ -18,6 +21,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "miniscript", .module = module }},
         }),
     });
+    exe.root_module.addOptions("release_options", release_options);
     b.installArtifact(exe);
     const standalone_options = b.addOptions();
     standalone_options.addOptionPath("miniscript", exe.getEmittedBin());
@@ -27,6 +31,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }) });
     standalone_tests.root_module.addOptions("executables", standalone_options);
+    standalone_tests.root_module.addOptions("release_options", release_options);
     test_step.dependOn(&b.addRunArtifact(standalone_tests).step);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = exe.root_module })).step);
     b.getInstallStep().dependOn(&b.addInstallFile(b.path("LICENSE"), "share/licenses/chainwall/LICENSE").step);
@@ -43,9 +48,10 @@ pub fn build(b: *std.Build) void {
         .target = b.graph.host,
         .optimize = .debug,
     }) });
+    smoke_tool.root_module.addOptions("release_options", release_options);
     const smoke = b.addRunArtifact(smoke_tool);
     const install_prefix: std.Build.LazyPath = .{ .relative = .{ .base = .install_prefix, .sub_path = "" } };
-    smoke.addDirectoryArg(install_prefix);
+    smoke.addDirectoryArg2(install_prefix, .{});
     smoke.addArgs(&.{ if (build_cli) "cli" else "no-cli", if (build_lsp) "lsp" else "no-lsp" });
     smoke.step.dependOn(b.getInstallStep());
     b.step("smoke", "Check native installed binaries, documentation, skills and completions").dependOn(&smoke.step);
@@ -56,14 +62,17 @@ pub fn build(b: *std.Build) void {
     }) });
     const source_package = b.addRunArtifact(source_package_tool);
     source_package.addArg(b.graph.zig_exe);
-    source_package.addDirectoryArg(b.path("."));
+    source_package.addDirectoryArg2(b.path("."), .{});
     source_package.has_side_effects = true;
     b.step("test-package", "Fetch, extract and build the manifest-filtered source package").dependOn(&source_package.step);
-    const archive_name = b.fmt("chainwall-{s}-{s}.tar.gz", .{ @import("build.zig.zon").version, target.result.zigTriple(b.allocator) catch @panic("OOM") });
+    const archive_name = b.fmt("chainwall-{s}-{s}.tar.gz", .{ release_version, target.result.zigTriple(b.allocator) catch @panic("OOM") });
     const archive = b.addSystemCommand(&.{ "tar", "-czf" });
-    const archive_path = archive.addOutputFileArg(archive_name);
+    // The directory argument tracks the path, so always archive the current install tree.
+    archive.has_side_effects = true;
+    const archive_path = archive.addOutputFileArg2(archive_name, .{});
     archive.addArg("-C");
-    archive.addDirectoryArg(install_prefix);
+    // Distinguish install trees when checkouts share a local cache.
+    archive.addDirectoryArg2(install_prefix, .{ .make_absolute = true });
     archive.addArgs(&.{ "bin", "share" });
     archive.step.dependOn(b.getInstallStep());
     const install_archive = b.addInstallFileWithDir(archive_path, .prefix, b.fmt("packages/{s}", .{archive_name}));
@@ -106,6 +115,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .imports = &.{ .{ .name = "miniscript", .module = module }, .{ .name = "zqlite", .module = sqlite.module("zqlite") } },
             });
+            cli_module.addOptions("release_options", release_options);
             // Embed the versioned protocol snapshots shipped in this repository.
             cli_module.addAnonymousImport("factory-addresses", .{
                 .root_source_file = b.path("src/cli/artifacts/factory-addresses.json"),
@@ -136,6 +146,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{.{ .name = "miniscript", .module = module }},
             }) });
             command_tests.root_module.addOptions("executables", command_options);
+            command_tests.root_module.addOptions("release_options", release_options);
             const commands = b.addRunArtifact(command_tests);
             b.step("test-commands", "Test complete CLI commands with Zig transports").dependOn(&commands.step);
             test_step.dependOn(&commands.step);
@@ -147,6 +158,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .imports = &.{ .{ .name = "miniscript", .module = module }, .{ .name = "zqlite", .module = sqlite.module("zqlite") } },
             });
+            lsp_module.addOptions("release_options", release_options);
             const lsp = b.addExecutable(.{ .name = "chainwall-lsp", .root_module = lsp_module });
             b.installArtifact(lsp);
             b.getInstallStep().dependOn(&b.addInstallDirectory(.{ .source_dir = b.path("editors/neovim"), .install_dir = .prefix, .install_subdir = "share/chainwall/editors/neovim" }).step);
@@ -154,7 +166,7 @@ pub fn build(b: *std.Build) void {
             const editor_run = b.addRunArtifact(editor_smoke);
             editor_run.addArg(b.option([]const u8, "neovim", "Neovim executable for test-editor") orelse "nvim");
             editor_run.addFileArg(lsp.getEmittedBin());
-            editor_run.addDirectoryArg(b.path("editors/neovim"));
+            editor_run.addDirectoryArg2(b.path("editors/neovim"), .{});
             b.step("test-editor", "Test the native Neovim integration with the real LSP").dependOn(&editor_run.step);
             const run_lsp = b.addRunArtifact(lsp);
             run_lsp.addPassthruArgs();
@@ -169,6 +181,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{.{ .name = "miniscript", .module = module }},
             }) });
             protocol_tests.root_module.addOptions("executables", lsp_options);
+            protocol_tests.root_module.addOptions("release_options", release_options);
             const protocol_run = b.addRunArtifact(protocol_tests);
             b.step("test-lsp", "Test the LSP executable over framed stdio").dependOn(&protocol_run.step);
             test_step.dependOn(&protocol_run.step);

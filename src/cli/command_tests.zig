@@ -5,6 +5,7 @@ const abi = @import("abi_codec.zig");
 const contracts = @import("contracts.zig");
 const mock = @import("test_rpc.zig");
 const binaries = @import("executables");
+const release_version = @import("release_options").version;
 const registry = "0x1111111111111111111111111111111111111111";
 const interact = "0x2222222222222222222222222222222222222222";
 const safe = "0x3333333333333333333333333333333333333333";
@@ -59,6 +60,7 @@ test "doctor fails when cast send does not support raw calldata" {
     try std.testing.expect(result.term == .exited and result.term.exited != 0);
     const report = try c.parse(a, result.stdout);
     try std.testing.expect(!c.field(report, "ok").?.bool);
+    try std.testing.expectEqualStrings(release_version, try c.string(c.field(report, "chainwall").?));
     const cast = c.field(report, "cast").?;
     try std.testing.expectEqualStrings("IncompatibleFoundrySend", try c.string(c.field(cast, "code").?));
     try std.testing.expect(std.mem.indexOf(u8, try c.string(c.field(cast, "action").?), "foundryup --install 1.8.6") != null);
@@ -180,7 +182,9 @@ test "real CLI rejects inapplicable flags before changing configuration" {
     const dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
     const doctor = try run(a, dir, "http://127.0.0.1:1", &.{"doctor"});
     try success(doctor);
-    try std.testing.expect(c.field(try c.parse(a, doctor.stdout), "ok").?.bool);
+    const report = try c.parse(a, doctor.stdout);
+    try std.testing.expect(c.field(report, "ok").?.bool);
+    try std.testing.expectEqualStrings(release_version, try c.string(c.field(report, "chainwall").?));
     const source = try a.print("{s}/source.ls", .{dir});
     const settings = try a.print("{s}/settings.json", .{dir});
     try c.write(std.testing.io, source, "1", false);

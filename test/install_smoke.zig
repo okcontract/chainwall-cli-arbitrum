@@ -1,5 +1,6 @@
 //! Native installation smoke runner. Invoked after `zig build` has installed files.
 const std = @import("std");
+const release_version = @import("release_options").version;
 fn require(io: std.Io, a: std.mem.Allocator, prefix: []const u8, path: []const u8) !void {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, try std.Io.Dir.path.join(a, &.{ prefix, path }), a, .limited(4 * 1024 * 1024));
     if (bytes.len == 0) return error.EmptyInstalledFile;
@@ -21,10 +22,14 @@ pub fn main(init: std.process.Init) !void {
         try require(init.io, a, prefix, "share/fish/vendor_completions.d/chainwall.fish");
     }
     if (lsp) for ([_][]const u8{ "plugin/chainwall.lua", "ftplugin/lambdascript.vim", "syntax/lambdascript.vim" }) |path| try require(init.io, a, prefix, try a.print("share/chainwall/editors/neovim/{s}", .{path}));
-    for ([_]struct { name: []const u8, enabled: bool }{ .{ .name = "chainwall", .enabled = cli }, .{ .name = "chainwall-lsp", .enabled = lsp } }) |item| {
+    for ([_]struct { name: []const u8, enabled: bool, version: []const u8 }{
+        .{ .name = "miniscript", .enabled = true, .version = "miniscript " ++ release_version ++ "\n" },
+        .{ .name = "chainwall", .enabled = cli, .version = release_version ++ " (Zig " ++ @import("builtin").zig_version_string ++ ")" },
+        .{ .name = "chainwall-lsp", .enabled = lsp, .version = "chainwall-lsp " ++ release_version ++ "\n" },
+    }) |item| {
         if (!item.enabled) continue;
         const output = try std.process.run(a, init.io, .{ .argv = &.{ try std.Io.Dir.path.join(a, &.{ prefix, "bin", item.name }), "--version" }, .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(10) } } });
-        if (output.term != .exited or output.term.exited != 0 or std.mem.indexOf(u8, output.stdout, "0.3.1") == null) return error.VersionSmokeFailed;
+        if (output.term != .exited or output.term.exited != 0 or std.mem.indexOf(u8, output.stdout, item.version) == null) return error.VersionSmokeFailed;
     }
     // Compile through stdin using a real file, without depending on a shell.
     const source = try a.print("{s}/smoke-input.ls", .{prefix});

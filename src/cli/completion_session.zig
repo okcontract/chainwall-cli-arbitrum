@@ -35,12 +35,19 @@ fn exchange(a: c.A, io: std.Io, path: []const u8, operation: []const u8) ![]u8 {
     return reader.interface.allocRemaining(a, .limited(16 * 1024 * 1024));
 }
 
+/// The caller owns the response bytes and can free them with `a`.
 pub fn request(a: c.A, io: std.Io, selected: Selection, operation: []const u8) ![]u8 {
-    const path = c.trim(try std.Io.Dir.cwd().readFileAlloc(io, try selected.endpoint(a, io), a, .limited(256)));
+    var scratch: std.heap.ArenaAllocator = .init(a);
+    defer scratch.deinit();
+    const temp = scratch.allocator();
+    const path = c.trim(try std.Io.Dir.cwd().readFileAlloc(io, try selected.endpoint(temp, io), temp, .limited(256)));
     const Result = union(enum) { response: anyerror![]u8, timeout: std.Io.Cancelable!void };
     var buffer: [2]Result = undefined;
     var select = std.Io.Select(Result).init(io, &buffer);
-    defer select.cancelDiscard();
+    defer while (select.cancel()) |result| switch (result) {
+        .response => |response| if (response catch null) |bytes| releaseResponse(a, bytes),
+        .timeout => {},
+    };
     try select.concurrent(.timeout, std.Io.sleep, .{ io, .fromMilliseconds(250), .awake });
     try select.concurrent(.response, exchange, .{ a, io, path, operation });
     return switch (try select.await()) {
@@ -49,9 +56,14 @@ pub fn request(a: c.A, io: std.Io, selected: Selection, operation: []const u8) !
     };
 }
 
+fn releaseResponse(a: c.A, bytes: []u8) void {
+    std.crypto.secureZero(u8, bytes);
+    a.free(bytes);
+}
+
 pub fn entries(a: c.A, io: std.Io, selected: Selection) ![]labels.Entry {
     if (request(a, io, selected, "entries")) |raw| {
-        defer std.crypto.secureZero(u8, raw);
+        defer releaseResponse(a, raw);
         return parseEntries(a, raw);
     } else |_| {}
     const db = try storage.Store.openReadOnly(a, io, selected.dir);

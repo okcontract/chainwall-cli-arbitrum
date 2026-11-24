@@ -1,6 +1,6 @@
 # Contributing
 
-Use Zig 0.17.0, as pinned in `.zig-version`. From the repository root:
+Use Zig 0.17.1, as pinned in `.zig-version`. From the repository root:
 
 ```sh
 zig fmt --check build.zig build.zig.zon src test

@@ -158,7 +158,7 @@ zig-out/bin/chainwall --help
 # Put zig-out/bin/chainwall on PATH to use the commands below.
 ```
 
-Zig 0.17 and Foundry 1.7.1 are tested. The CLI uses
+Zig 0.17.1 and Foundry 1.7.1 are tested. The CLI uses
 [zqlite](https://github.com/karlseguin/zqlite.zig), pinned by URL and package hash in `build.zig.zon`, with bundled SQLite linked
 statically. No SQLite installation is
 needed at runtime. `zig build -Dcli=false -Dlsp=false` builds the compiler alone, using only

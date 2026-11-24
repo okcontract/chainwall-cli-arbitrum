@@ -17,7 +17,7 @@ Bundled factory addresses are provided only for Arbitrum One (chain ID `42161`).
 
 ## Build
 
-Install [Zig 0.17.0](https://ziglang.org/download/), then run from this repository:
+Install [Zig 0.17.1](https://ziglang.org/download/), then run from this repository:
 
 ```sh
 zig build -Doptimize=safe

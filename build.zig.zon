@@ -1,8 +1,8 @@
 .{
     .name = .chainwall_miniscript,
-    .version = "0.3.1",
+    .version = "0.3.2",
     .fingerprint = 0x92518293c08ab791,
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .zqlite = .{
             .lazy = true,

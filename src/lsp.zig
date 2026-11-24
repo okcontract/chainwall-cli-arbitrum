@@ -1,5 +1,6 @@
 // Copyright (C) 2026 OKcontract Pte. Ltd.
 const std = @import("std");
+const release_version = @import("release_options").version;
 const c = @import("cli/common.zig");
 const Server = @import("lsp/server.zig").Server;
 const metadata = @import("lsp/metadata.zig");
@@ -41,7 +42,7 @@ fn start(init: std.process.Init) !u8 {
         return 0;
     }
     if (args.flag("version")) {
-        try std.Io.File.stdout().writeStreamingAll(init.io, "chainwall-lsp 0.3.1\n");
+        try std.Io.File.stdout().writeStreamingAll(init.io, "chainwall-lsp " ++ release_version ++ "\n");
         return 0;
     }
     if (args.positional.len > 0) return error.InvalidArguments;

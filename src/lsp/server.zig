@@ -1,6 +1,7 @@
 // Copyright (C) 2026 OKcontract Pte. Ltd.
 const std = @import("std");
 const ms = @import("miniscript");
+const release_version = @import("release_options").version;
 const c = @import("../cli/common.zig");
 const p = @import("protocol.zig");
 const text = @import("text.zig");
@@ -174,17 +175,25 @@ pub const Server = struct {
     pub fn run(s: *Server) !u8 {
         var buffer: [8192]u8 = undefined;
         var reader = std.Io.File.stdin().readerStreaming(s.io, &buffer);
-        const Event = union(enum) { input: anyerror!?[]const u8, tick: anyerror!void };
+        const Event = union(enum) {
+            input: anyerror!?[]const u8,
+            tick: anyerror!void,
+
+            fn deinit(event: @This()) void {
+                switch (event) {
+                    .input => |result| if (result catch null) |body| std.heap.page_allocator.free(body),
+                    .tick => {},
+                }
+            }
+        };
         var events: [3]Event = undefined;
         var select = std.Io.Select(Event).init(s.io, &events);
-        defer while (select.cancel()) |event| switch (event) {
-            .input => |result| if (result catch null) |body| std.heap.page_allocator.free(body),
-            .tick => {},
-        };
+        defer while (select.cancel()) |event| event.deinit();
         try select.concurrent(.input, readInput, .{&reader.interface});
         var ticking = false;
         while (s.exit_code == null) {
             const event = try select.await();
+            defer event.deinit();
             if (event == .tick) {
                 try event.tick;
                 ticking = false;
@@ -196,7 +205,6 @@ pub const Server = struct {
             }
             if (event == .input) {
                 const body = (try event.input) orelse break;
-                defer std.heap.page_allocator.free(body);
                 try select.concurrent(.input, readInput, .{&reader.interface});
                 var arena = std.heap.ArenaAllocator.init(s.a);
                 defer arena.deinit();
@@ -271,7 +279,7 @@ pub const Server = struct {
                 for (folders.array.items) |folder| try s.addFolder(try p.string(p.field(folder, "uri")));
             } else if (p.field(params, "rootUri") == .string) try s.addFolder(p.field(params, "rootUri").string);
             s.initialized = true;
-            return try p.json(a, .{ .serverInfo = .{ .name = "chainwall-lsp", .version = "0.3.1" }, .capabilities = .{
+            return try p.json(a, .{ .serverInfo = .{ .name = "chainwall-lsp", .version = release_version }, .capabilities = .{
                 .positionEncoding = if (s.encoding == .utf8) "utf-8" else "utf-16",
                 .textDocumentSync = .{ .openClose = true, .change = 2, .save = .{ .includeText = false } },
                 .completionProvider = .{ .triggerCharacters = .{ "@", ".", "(", "/", "$" }, .resolveProvider = false },

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.2 - 2026-11-23
+
+- Explain RPC chain ID mismatches and decode contract reverts and Safe error
+  codes in human-readable and JSON diagnostics.
+- Name rejected options in CLI errors and report missing account and Safe
+  address arguments.
+- Keep native balances visible when a USD price feed is missing and show how
+  to configure the feed.
+- Check that Foundry supports `cast send --data` in `chainwall doctor` and
+  report how to install the tested Foundry version.
+- Show one explorer link per submitted transaction hash, including replacements.
+- Document how to download and verify terms and use an alternate IPFS gateway.
+- Free canceled shell completion responses and release LSP input frames on errors.
+- Apply the same 64 MiB limit whether `miniscript` reads from a file or standard
+  input.
+- Require Zig 0.17.1 for source builds. Use the package manifest version for
+  binaries and archive names, and rebuild archives from the current install tree.
+
 ## 0.3.1 - 2026-10-27
 
 - Preserve discovered replacement transactions across observations, revalidate
